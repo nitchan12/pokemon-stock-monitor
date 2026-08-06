@@ -1,0 +1,45 @@
+<!--
+  Fixture: product detail page in the IN STOCK state.
+
+  The <div class="add-button-wrapper"> block below is a verbatim copy of the
+  raw server HTML from a genuinely in-stock product on the same storefront
+  (https://www.toysrus.co.th/th-th/the-super-mario-galaxy-movie-5-inch-yoshi-figure-with-accessories-10132862.html),
+  captured via fetch() before any JavaScript runs. The product name/price
+  were swapped to the MA6 values so this fixture represents "MA6 has come
+  back in stock" — the exact scenario the monitor exists to catch.
+
+  This is a REAL in-stock example from the live site, not an invented one:
+  add-to-cart button present, back-in-store button absent, add-to-cart-url
+  input carries a value, and data-available="true".
+-->
+<html>
+<body>
+  <div class="product-detail" data-pid="10161784">
+    <h1 class="product-name">(พรีออเดอร์) Pokemon TCG MA6 (58) ชุด 30th Celebration (กำหนดวางจำหน่าย กันยายน 2026)</h1>
+
+    <div class="prices">
+      <span class="price-items">
+        <span class="sales"><span class="value">฿1,980</span></span>
+      </span>
+    </div>
+
+    <div class="row no-gutters summary">
+      <div class="col-12 cart-and-ipay add-button-wrapper">
+        <div class="">
+          <input type="hidden" class="add-to-cart-url" value="/on/demandware.store/Sites-ToysRUs_TH-Site/th_TH/Cart-AddProduct" />
+          <button class="btn btn-block btn-lg btn-info add-to-cart" data-toggle="modal" data-pid="10161784" data-add-to-cart>
+            เพิ่มสินค้าไปยังรถเข็น
+          </button>
+        </div>
+
+        <div class="availability product-availability" data-ready-to-order="true" data-available="true" data-limit-reached="false">
+          <ul class="list-unstyled availability-msg">
+            <li></li>
+          </ul>
+          <ul class="list-unstyled limit-msg"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

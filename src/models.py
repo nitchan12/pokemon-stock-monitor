@@ -16,27 +16,27 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
 class Availability(str, Enum):
-    """Normalized stock/availability status for a product.
+    """Normalized stock availability for a product, as read from its product
+    detail page (PDP).
 
-    IN_STOCK / OUT_OF_STOCK / PRE_ORDER are signals inferred from the page.
-    UNKNOWN means the page did not contain enough signal to classify the
-    product confidently (e.g. missing price, no recognizable badge) — see
-    ``parser._detect_availability`` for the exact combination of rules.
-    UNKNOWN is a deliberate, honest "don't know", not a bug.
+    IN_STOCK and OUT_OF_STOCK are only assigned when several independent
+    signals on the page agree (see ``parser.detect_availability``).
+    UNKNOWN means the page did not provide a confident answer — for example
+    the markup changed, or the availability block was missing. UNKNOWN is a
+    deliberate, honest "don't know" and never triggers a notification.
     """
 
     IN_STOCK = "IN_STOCK"
     OUT_OF_STOCK = "OUT_OF_STOCK"
-    PRE_ORDER = "PRE_ORDER"
     UNKNOWN = "UNKNOWN"
 
 
 class Product(BaseModel):
-    """A single product as observed on the target search results page."""
+    """A single product as observed on its product detail page."""
 
     id: str = Field(..., min_length=1, description="Site-native product id (SFCC data-pid)")
     name: str
-    price: Decimal | None = Field(default=None, description="Price in THB; None if not shown on the page")
+    price: Decimal | None = Field(default=None, description="Price in THB; None if not shown")
     availability: Availability
     product_url: HttpUrl
     checked_at: datetime
@@ -57,6 +57,25 @@ class Product(BaseModel):
         return value
 
 
+class ProductState(BaseModel):
+    """Per-product persisted state, including notification bookkeeping.
+
+    ``notify_count`` and ``last_notified_at`` implement the "limited repeat"
+    alerting policy: when a product becomes available we alert immediately,
+    then re-alert a bounded number of times while it stays available, then
+    go quiet. Both counters reset as soon as the product stops being
+    available, so a future restock alerts again from scratch.
+
+    This state must be persisted because each run is a separate process
+    (GitHub Actions runners are ephemeral) — without it, a long-running
+    restock would either alert on every single check or never re-alert.
+    """
+
+    product: Product
+    notify_count: int = Field(default=0, ge=0)
+    last_notified_at: datetime | None = None
+
+
 class StoredState(BaseModel):
     """The full on-disk state persisted between runs (data/state.json).
 
@@ -64,5 +83,5 @@ class StoredState(BaseModel):
     JSON stays stable/diffable across runs (no incidental key reordering).
     """
 
-    products: dict[str, Product] = Field(default_factory=dict)
+    products: dict[str, ProductState] = Field(default_factory=dict)
     last_checked_at: datetime | None = None

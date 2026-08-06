@@ -1,0 +1,34 @@
+<!--
+  Synthetic fixture: availability signals CONTRADICT each other.
+
+  data-available says "true", but the out-of-stock button is rendered and
+  the add-to-cart URL input is empty. This is what a partially-changed
+  template or a half-cached page could look like. The parser must report
+  UNKNOWN (and therefore NOT fire a false "in stock" alert) rather than
+  trust whichever signal it happens to check first.
+-->
+<html>
+<body>
+  <div class="product-detail" data-pid="10161784">
+    <h1 class="product-name">(พรีออเดอร์) Pokemon TCG MA6 (58) ชุด 30th Celebration</h1>
+
+    <div class="prices">
+      <span class="price-items">
+        <span class="sales"><span class="value">฿1,980</span></span>
+      </span>
+    </div>
+
+    <div class="col-12 cart-and-ipay add-button-wrapper">
+      <div class="">
+        <input type="hidden" class="add-to-cart-url">
+        <button class="btn btn-block btn-lg btn-secondary back-in-store" data-back-in-stock>
+          <span class="btn-content">ไม่มี</span>
+        </button>
+      </div>
+      <div class="availability product-availability" data-ready-to-order="true" data-available="true">
+        <ul class="list-unstyled availability-msg"><li></li></ul>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

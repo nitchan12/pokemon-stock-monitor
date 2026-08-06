@@ -1,0 +1,49 @@
+<!--
+  Fixture: product detail page in the OUT OF STOCK state.
+
+  The <div class="add-button-wrapper"> block below is a verbatim copy of the
+  raw server HTML from
+  https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-58-30th-celebration-expected-september-2026-10161784.html
+  captured via fetch() (i.e. before any JavaScript runs), so it reflects
+  exactly what httpx receives. Surrounding page chrome was trimmed.
+
+  Note data-ready-to-order="true" is present even though the product is NOT
+  available — this is why the parser must ignore that attribute.
+-->
+<html>
+<body>
+  <div class="product-detail" data-pid="10161784">
+    <h1 class="product-name">(พรีออเดอร์) Pokemon TCG MA6 (58) ชุด 30th Celebration (กำหนดวางจำหน่าย กันยายน 2026)</h1>
+
+    <div class="prices">
+      <span class="price-items">
+        <span class="sales"><span class="value">฿1,980</span></span>
+      </span>
+    </div>
+
+    <div class="row no-gutters summary">
+      <div class="col-12 cart-and-ipay add-button-wrapper">
+        <div class="">
+          <input type="hidden" class="add-to-cart-url">
+          <button class="btn btn-block btn-lg
+            btn-secondary back-in-store" data-toggle="modal" data-pid="10161784"
+            data-back-in-stock data-target="#backInStockModal"
+            data-product-name="Pokemon TCG MA6">
+            <span class="btn-content">
+              ไม่มี
+              <span class="d-block">แจ้งเตือนฉันเมื่อมีของกลับมาพร้อมจำหน่าย</span>
+            </span>
+          </button>
+        </div>
+
+        <div class="availability product-availability" data-ready-to-order="true" data-available="false" data-limit-reached="false">
+          <ul class="list-unstyled availability-msg">
+            <li></li>
+          </ul>
+          <ul class="list-unstyled limit-msg"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

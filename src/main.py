@@ -1,30 +1,37 @@
 """main.py — orchestrates a single monitor run.
 
-Flow (matches the project's required main flow exactly):
+Flow::
 
-    Load Config -> Load State -> Download HTML -> Parse -> Detect Change
-    -> Notify -> Save State -> Exit
+    Load Config -> Load State -> for each product page: Download -> Parse
+    -> Detect (in stock?) -> Notify -> Save State -> Exit
 
-``run_once()`` is the entire flow as a single, testable function that
-returns a process exit code — it is what GitHub Actions (or any other
-one-shot cron runner) calls directly. ``main()`` additionally supports an
-optional ``--schedule`` flag for local, continuous use via APScheduler;
-this is a convenience layer on top of ``run_once()`` and requires no
-changes to any other module to add, satisfying the "move to GitHub Actions
-without touching core code" requirement.
+``run_once()`` is the entire flow as one testable function returning a
+process exit code — it is what GitHub Actions (or any other one-shot cron
+runner) calls directly. ``main()`` additionally supports an optional
+``--schedule`` flag for local continuous use via APScheduler; that is a
+convenience layer on top of ``run_once()`` requiring no changes to any
+other module, which is what keeps the project portable between GitHub
+Actions and a long-running local process.
+
+Partial-failure policy: if one of the three product pages fails to
+download or parse, the run logs it and continues with the others rather
+than aborting. Missing one page must never prevent an alert for a
+different page that just came back in stock. The run only reports failure
+if *every* page failed.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import time
 from datetime import datetime, timezone
 
 from src.config import ConfigError, Settings, load_config
-from src.detector import detect_changes
-from src.models import StoredState
+from src.detector import detect_in_stock
+from src.models import Product, StoredState
 from src.notifier import TelegramNotifier
-from src.parser import ParserError, parse_search_results
+from src.parser import ParserError, parse_product_page
 from src.scraper import Scraper
 from src.storage import StorageError, load_state, save_state
 from src.utils import BANGKOK_TZ, configure_logging
@@ -34,13 +41,11 @@ logger = logging.getLogger(__name__)
 EXIT_SUCCESS = 0
 EXIT_CONFIG_ERROR = 1
 EXIT_FETCH_ERROR = 2
-EXIT_PARSE_ERROR = 3
 EXIT_STORAGE_ERROR = 4
 
 
 def run_once(settings: Settings | None = None) -> int:
-    """Run the full monitor flow exactly once. Returns a process exit code
-    (0 on success, non-zero on the first unrecoverable failure)."""
+    """Run the full monitor flow exactly once. Returns a process exit code."""
     logger.info("[bold]เริ่มตรวจสอบสต็อกสินค้า Pokemon TCG MA6[/bold]", extra={"markup": True})
 
     if settings is None:
@@ -51,46 +56,46 @@ def run_once(settings: Settings | None = None) -> int:
             return EXIT_CONFIG_ERROR
 
     state = load_state(settings.state_file)
-    logger.info("โหลด state เดิมสำเร็จ: พบสินค้าที่บันทึกไว้ %d รายการ", len(state.products))
+    logger.info("โหลด state เดิมสำเร็จ: มีสินค้าที่บันทึกไว้ %d รายการ", len(state.products))
 
-    scraper = Scraper(timeout_seconds=settings.request_timeout)
-    fetch_result = scraper.fetch_html(settings.target_url)
-    if not fetch_result.success or fetch_result.html is None:
-        logger.error("ดาวน์โหลดหน้าเว็บไม่สำเร็จ: %s", fetch_result.error)
+    products = _collect_products(settings)
+    if not products:
+        logger.error("ไม่สามารถอ่านหน้าสินค้าได้เลยแม้แต่รายการเดียว")
         return EXIT_FETCH_ERROR
-    logger.info("ดาวน์โหลด HTML สำเร็จ (status=%s)", fetch_result.status_code)
 
-    try:
-        products = parse_search_results(fetch_result.html, source_url=settings.target_url)
-    except ParserError as exc:
-        logger.error(
-            "โครงสร้างหน้าเว็บเปลี่ยนแปลงหรือแยกวิเคราะห์ไม่สำเร็จ (HTML_CHANGED): %s", exc
-        )
-        return EXIT_PARSE_ERROR
-    logger.info("แยกวิเคราะห์ HTML สำเร็จ: พบสินค้า %d รายการในหน้าค้นหา", len(products))
+    result = detect_in_stock(
+        products=products,
+        previous_state=state.products,
+        now=datetime.now(timezone.utc),
+        max_notify_count=settings.max_notify_count,
+        repeat_interval_minutes=settings.repeat_interval_minutes,
+    )
 
-    events = detect_changes(products, state.products)
-    if not events:
-        logger.info("ไม่พบการเปลี่ยนแปลงตั้งแต่การตรวจสอบครั้งก่อน")
+    if not result.events:
+        logger.info("ยังไม่มีสินค้าพร้อมจำหน่าย (หรืออยู่ในช่วงพักการแจ้งเตือนซ้ำ)")
     else:
-        logger.warning("พบการเปลี่ยนแปลง %d รายการ กำลังส่งการแจ้งเตือน...", len(events))
+        logger.warning("พบสินค้าพร้อมจำหน่าย %d รายการ กำลังแจ้งเตือน...", len(result.events))
         notifier = TelegramNotifier(
             bot_token=settings.bot_token,
             chat_id=settings.chat_id,
             timeout_seconds=settings.request_timeout,
+            max_notify_count=settings.max_notify_count,
         )
-        sent_count = notifier.send_events(events)
-        if sent_count < len(events):
-            logger.warning("ส่งการแจ้งเตือนสำเร็จ %d/%d รายการ (บางรายการล้มเหลว)", sent_count, len(events))
+        sent_count = notifier.send_events(result.events)
+        if sent_count < len(result.events):
+            logger.warning(
+                "ส่งการแจ้งเตือนสำเร็จ %d/%d รายการ (บางรายการล้มเหลว)",
+                sent_count,
+                len(result.events),
+            )
         else:
             logger.info("ส่งการแจ้งเตือนสำเร็จครบทุกรายการ (%d รายการ)", sent_count)
 
-    new_state = StoredState(
-        products={product.id: product for product in products},
-        last_checked_at=datetime.now(timezone.utc),
-    )
     try:
-        save_state(settings.state_file, new_state)
+        save_state(
+            settings.state_file,
+            StoredState(products=result.new_state, last_checked_at=datetime.now(timezone.utc)),
+        )
     except StorageError as exc:
         logger.error("บันทึก state ไม่สำเร็จ: %s", exc)
         return EXIT_STORAGE_ERROR
@@ -99,17 +104,49 @@ def run_once(settings: Settings | None = None) -> int:
     return EXIT_SUCCESS
 
 
+def _collect_products(settings: Settings) -> list[Product]:
+    """Download and parse every configured product page.
+
+    Failures on individual pages are logged and skipped so that one broken
+    page cannot suppress an alert for the others.
+    """
+    scraper = Scraper(timeout_seconds=settings.request_timeout)
+    products: list[Product] = []
+
+    for index, url in enumerate(settings.product_urls):
+        if index > 0 and settings.request_delay_seconds > 0:
+            time.sleep(settings.request_delay_seconds)
+
+        fetch_result = scraper.fetch_html(url)
+        if not fetch_result.success or fetch_result.html is None:
+            logger.error("ดาวน์โหลดหน้าสินค้าไม่สำเร็จ (%s): %s", url, fetch_result.error)
+            continue
+
+        try:
+            product = parse_product_page(fetch_result.html, url)
+        except ParserError as exc:
+            logger.error(
+                "โครงสร้างหน้าสินค้าเปลี่ยนแปลงหรือแยกวิเคราะห์ไม่สำเร็จ (%s): %s", url, exc
+            )
+            continue
+
+        logger.info("ตรวจสอบแล้ว: %s -> %s", product.name[:50], product.availability.value)
+        products.append(product)
+
+    return products
+
+
 def _run_scheduled(cron_expression: str) -> int:
     """Run `run_once` repeatedly on a cron schedule until interrupted.
+
     Local/dev convenience only — GitHub Actions should call `run_once`
-    (i.e. run with no --schedule flag) directly from its own cron trigger.
+    (i.e. run with no --schedule flag) from its own cron trigger.
     """
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
 
     scheduler = BlockingScheduler(timezone=str(BANGKOK_TZ))
-    trigger = CronTrigger.from_crontab(cron_expression)
-    scheduler.add_job(run_once, trigger=trigger)
+    scheduler.add_job(run_once, trigger=CronTrigger.from_crontab(cron_expression))
 
     logger.info("เริ่มทำงานแบบตั้งเวลาด้วย cron: %s (กด Ctrl+C เพื่อหยุด)", cron_expression)
     try:
@@ -126,7 +163,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         metavar="CRON",
         default=None,
         help=(
-            "Run continuously on a 5-field cron expression (e.g. '*/30 * * * *') "
+            "Run continuously on a 5-field cron expression (e.g. '*/2 * * * *') "
             "using APScheduler. Omit this flag to run once and exit — this is "
             "the mode GitHub Actions should use."
         ),

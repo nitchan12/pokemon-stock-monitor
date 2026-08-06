@@ -10,9 +10,24 @@ from pathlib import Path
 
 import pytest
 
-from src.config import DEFAULT_REQUEST_TIMEOUT_SECONDS, DEFAULT_TARGET_URL, ConfigError, load_config
+from src.config import (
+    DEFAULT_MAX_NOTIFY_COUNT,
+    DEFAULT_PRODUCT_URLS,
+    DEFAULT_REPEAT_INTERVAL_MINUTES,
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    ConfigError,
+    load_config,
+)
 
-ENV_VARS = ("BOT_TOKEN", "CHAT_ID", "REQUEST_TIMEOUT", "TARGET_URL")
+ENV_VARS = (
+    "BOT_TOKEN",
+    "CHAT_ID",
+    "REQUEST_TIMEOUT",
+    "PRODUCT_URLS",
+    "MAX_NOTIFY_COUNT",
+    "REPEAT_INTERVAL_MINUTES",
+    "REQUEST_DELAY_SECONDS",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -28,74 +43,101 @@ def empty_env_file(tmp_path: Path) -> Path:
     return path
 
 
-class TestLoadConfigSuccess:
-    def test_loads_valid_config_from_env_vars(self, monkeypatch: pytest.MonkeyPatch, empty_env_file: Path):
-        monkeypatch.setenv("BOT_TOKEN", "123:abc")
-        monkeypatch.setenv("CHAT_ID", "999999")
+@pytest.fixture
+def valid_credentials(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BOT_TOKEN", "123:abc")
+    monkeypatch.setenv("CHAT_ID", "999999")
 
+
+class TestDefaults:
+    def test_loads_valid_config_with_defaults(self, valid_credentials, empty_env_file: Path):
         settings = load_config(env_file=empty_env_file)
 
         assert settings.bot_token == "123:abc"
         assert settings.chat_id == "999999"
         assert settings.request_timeout == DEFAULT_REQUEST_TIMEOUT_SECONDS
-        assert settings.target_url == DEFAULT_TARGET_URL
+        assert settings.product_urls == DEFAULT_PRODUCT_URLS
+        assert settings.max_notify_count == DEFAULT_MAX_NOTIFY_COUNT
+        assert settings.repeat_interval_minutes == DEFAULT_REPEAT_INTERVAL_MINUTES
 
-    def test_custom_request_timeout_is_used(self, monkeypatch: pytest.MonkeyPatch, empty_env_file: Path):
-        monkeypatch.setenv("BOT_TOKEN", "123:abc")
-        monkeypatch.setenv("CHAT_ID", "999999")
+    def test_three_ma6_product_pages_are_monitored_by_default(self):
+        assert len(DEFAULT_PRODUCT_URLS) == 3
+        assert all("ma6" in url for url in DEFAULT_PRODUCT_URLS)
+        # Each URL must carry a distinct product id.
+        ids = {url.rsplit("-", 1)[-1] for url in DEFAULT_PRODUCT_URLS}
+        assert len(ids) == 3
+
+
+class TestOverrides:
+    def test_custom_request_timeout(self, valid_credentials, empty_env_file, monkeypatch):
         monkeypatch.setenv("REQUEST_TIMEOUT", "30")
+        assert load_config(env_file=empty_env_file).request_timeout == 30.0
+
+    def test_custom_alert_policy(self, valid_credentials, empty_env_file, monkeypatch):
+        monkeypatch.setenv("MAX_NOTIFY_COUNT", "5")
+        monkeypatch.setenv("REPEAT_INTERVAL_MINUTES", "2")
 
         settings = load_config(env_file=empty_env_file)
+        assert settings.max_notify_count == 5
+        assert settings.repeat_interval_minutes == 2
 
-        assert settings.request_timeout == 30.0
-
-    def test_custom_target_url_is_used(self, monkeypatch: pytest.MonkeyPatch, empty_env_file: Path):
-        monkeypatch.setenv("BOT_TOKEN", "123:abc")
-        monkeypatch.setenv("CHAT_ID", "999999")
-        monkeypatch.setenv("TARGET_URL", "https://example.test/search")
-
-        settings = load_config(env_file=empty_env_file)
-
-        assert settings.target_url == "https://example.test/search"
-
-
-class TestLoadConfigFailures:
-    def test_missing_bot_token_raises_config_error(
-        self, monkeypatch: pytest.MonkeyPatch, empty_env_file: Path
+    def test_custom_product_urls_are_split_on_commas(
+        self, valid_credentials, empty_env_file, monkeypatch
     ):
-        monkeypatch.setenv("CHAT_ID", "999999")
+        monkeypatch.setenv("PRODUCT_URLS", "https://a.test/1.html, https://a.test/2.html")
 
+        settings = load_config(env_file=empty_env_file)
+        assert settings.product_urls == ("https://a.test/1.html", "https://a.test/2.html")
+
+
+class TestFailures:
+    def test_missing_bot_token_raises(self, empty_env_file, monkeypatch):
+        monkeypatch.setenv("CHAT_ID", "999999")
         with pytest.raises(ConfigError, match="BOT_TOKEN"):
             load_config(env_file=empty_env_file)
 
-    def test_missing_chat_id_raises_config_error(self, monkeypatch: pytest.MonkeyPatch, empty_env_file: Path):
+    def test_missing_chat_id_raises(self, empty_env_file, monkeypatch):
         monkeypatch.setenv("BOT_TOKEN", "123:abc")
-
         with pytest.raises(ConfigError, match="CHAT_ID"):
             load_config(env_file=empty_env_file)
 
-    def test_missing_both_lists_both_in_error(self, empty_env_file: Path):
+    def test_missing_both_are_listed_together(self, empty_env_file):
         with pytest.raises(ConfigError) as exc_info:
             load_config(env_file=empty_env_file)
 
         assert "BOT_TOKEN" in str(exc_info.value)
         assert "CHAT_ID" in str(exc_info.value)
 
-    def test_non_numeric_request_timeout_raises_config_error(
-        self, monkeypatch: pytest.MonkeyPatch, empty_env_file: Path
-    ):
-        monkeypatch.setenv("BOT_TOKEN", "123:abc")
+    def test_blank_bot_token_counts_as_missing(self, empty_env_file, monkeypatch):
+        monkeypatch.setenv("BOT_TOKEN", "   ")
         monkeypatch.setenv("CHAT_ID", "999999")
-        monkeypatch.setenv("REQUEST_TIMEOUT", "not-a-number")
+        with pytest.raises(ConfigError, match="BOT_TOKEN"):
+            load_config(env_file=empty_env_file)
 
+    def test_non_numeric_timeout_raises(self, valid_credentials, empty_env_file, monkeypatch):
+        monkeypatch.setenv("REQUEST_TIMEOUT", "not-a-number")
         with pytest.raises(ConfigError, match="REQUEST_TIMEOUT"):
             load_config(env_file=empty_env_file)
 
-    def test_blank_bot_token_is_treated_as_missing(
-        self, monkeypatch: pytest.MonkeyPatch, empty_env_file: Path
+    def test_non_numeric_max_notify_count_raises(
+        self, valid_credentials, empty_env_file, monkeypatch
     ):
-        monkeypatch.setenv("BOT_TOKEN", "   ")
-        monkeypatch.setenv("CHAT_ID", "999999")
+        monkeypatch.setenv("MAX_NOTIFY_COUNT", "many")
+        with pytest.raises(ConfigError, match="MAX_NOTIFY_COUNT"):
+            load_config(env_file=empty_env_file)
 
-        with pytest.raises(ConfigError, match="BOT_TOKEN"):
+    def test_zero_max_notify_count_is_rejected(
+        self, valid_credentials, empty_env_file, monkeypatch
+    ):
+        # ge=1 on the model: alerting zero times would make the whole
+        # program pointless, so it must fail loudly rather than run silently.
+        monkeypatch.setenv("MAX_NOTIFY_COUNT", "0")
+        with pytest.raises(ConfigError):
+            load_config(env_file=empty_env_file)
+
+    def test_product_urls_set_but_empty_raises(
+        self, valid_credentials, empty_env_file, monkeypatch
+    ):
+        monkeypatch.setenv("PRODUCT_URLS", " , , ")
+        with pytest.raises(ConfigError, match="PRODUCT_URLS"):
             load_config(env_file=empty_env_file)

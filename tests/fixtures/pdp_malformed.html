@@ -1,0 +1,14 @@
+<!--
+  Synthetic fixture: the response is HTML but is not a product page at all
+  (e.g. an error page, a redirect landing page, or a bot-check page served
+  with status 200). No product name is present, so the parser must raise
+  ParserError so the caller can treat it as HTML_CHANGED and stop, rather
+  than silently reporting the product as unavailable.
+-->
+<html>
+<body>
+  <div class="error-page">
+    <p>ขออภัย เกิดข้อผิดพลาด</p>
+  </div>
+</body>
+</html>

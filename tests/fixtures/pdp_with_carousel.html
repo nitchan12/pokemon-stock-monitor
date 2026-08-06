@@ -1,0 +1,50 @@
+<!--
+  Regression fixture for a bug found by inspecting the LIVE page.
+
+  A real PDP renders "trending now" / "related products" carousels ABOVE the
+  product itself, and each carousel tile carries its own data-pid. A
+  page-wide `select_one("[data-pid]")` therefore returns the CAROUSEL's
+  product id (10132862 on the live page), not the product being viewed
+  (10161784).
+
+  Left unfixed, all three monitored MA6 pages would have been stored under
+  the same wrong id, collapsing them into one state entry and corrupting the
+  repeat-alert throttling.
+
+  This fixture reproduces that layout: a carousel tile with a different
+  data-pid (and its own price) appearing before .product-detail.
+-->
+<html>
+<body>
+  <div class="trending-now">
+    <div class="product-tile product" data-pid="10132862">
+      <a class="card-link"><span>The Super Mario Galaxy Movie 5-Inch Yoshi Figure</span></a>
+      <div class="prices">
+        <span class="price-items"><span class="sales"><span class="value">฿499</span></span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="product-detail product-data product-wrapper page-inner" data-pid="10161784">
+    <h1 class="product-name">(พรีออเดอร์) Pokemon TCG MA6 (58) ชุด 30th Celebration</h1>
+
+    <div class="prices">
+      <span class="price-items">
+        <span class="sales"><span class="value">฿1,980</span></span>
+      </span>
+    </div>
+
+    <div class="col-12 cart-and-ipay add-button-wrapper">
+      <div class="">
+        <input type="hidden" class="add-to-cart-url">
+        <button class="btn btn-block btn-lg btn-secondary back-in-store" data-back-in-stock data-pid="10161784">
+          <span class="btn-content">ไม่มี <span class="d-block">แจ้งเตือนฉันเมื่อมีของกลับมาพร้อมจำหน่าย</span></span>
+        </button>
+      </div>
+      <div class="availability product-availability" data-ready-to-order="true" data-available="false" data-limit-reached="false">
+        <ul class="list-unstyled availability-msg"><li></li></ul>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

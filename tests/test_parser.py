@@ -1,7 +1,8 @@
-"""Unit tests for src/parser.py.
+"""Unit tests for src/parser.py (product detail page parsing).
 
 All fixtures live under tests/fixtures/ and are pure HTML — no network I/O
-happens in this test module.
+happens in this test module. The in-stock and out-of-stock fixtures contain
+markup copied verbatim from the live site's raw server response.
 """
 
 from __future__ import annotations
@@ -10,126 +11,154 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from bs4 import BeautifulSoup
 
 from src.models import Availability
-from src.parser import ParserError, parse_search_results
+from src.parser import ParserError, detect_availability, parse_product_page
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+MA6_URL = (
+    "https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-58-"
+    "30th-celebration-expected-september-2026-10161784.html"
+)
 
 
 def _load_fixture(name: str) -> str:
     return (FIXTURES_DIR / name).read_text(encoding="utf-8")
 
 
-class TestParseSearchResults:
-    def test_extracts_all_products_from_search_grid(self):
-        html = _load_fixture("search_results.html")
-        products = parse_search_results(html)
+def _soup(name: str) -> BeautifulSoup:
+    return BeautifulSoup(_load_fixture(name), "lxml")
 
-        assert len(products) == 3
-        ids = {p.id for p in products}
-        assert ids == {"10161784", "10161786", "10161785"}
 
-    def test_ignores_unrelated_data_pid_tiles_outside_search_results(self):
-        html = _load_fixture("search_results.html")
-        products = parse_search_results(html)
+class TestDetectAvailability:
+    def test_real_out_of_stock_page_is_out_of_stock(self):
+        assert detect_availability(_soup("pdp_out_of_stock.html")) == Availability.OUT_OF_STOCK
 
-        # The "trending now" tile (pid 10132862) lives outside .search-results
-        # and must never appear in the parsed output.
-        assert "10132862" not in {p.id for p in products}
+    def test_real_in_stock_page_is_in_stock(self):
+        assert detect_availability(_soup("pdp_in_stock.html")) == Availability.IN_STOCK
 
-    def test_extracts_name_price_and_url_correctly(self):
-        html = _load_fixture("search_results.html")
-        products = {p.id: p for p in parse_search_results(html)}
+    def test_conflicting_signals_yield_unknown_not_a_guess(self):
+        # data-available="true" but the out-of-stock button is rendered.
+        # Must NOT report IN_STOCK — a false positive sends the user to a
+        # page where they cannot actually buy anything.
+        assert detect_availability(_soup("pdp_conflicting_signals.html")) == Availability.UNKNOWN
 
-        product = products["10161784"]
+    def test_no_signals_at_all_yields_unknown(self):
+        assert detect_availability(_soup("pdp_no_signals.html")) == Availability.UNKNOWN
+
+    def test_data_ready_to_order_is_ignored(self):
+        # Both real fixtures carry data-ready-to-order="true", yet they must
+        # resolve to opposite verdicts. This proves the parser is not keying
+        # off that attribute.
+        oos = _soup("pdp_out_of_stock.html")
+        in_stock = _soup("pdp_in_stock.html")
+        assert 'data-ready-to-order="true"' in str(oos)
+        assert 'data-ready-to-order="true"' in str(in_stock)
+        assert detect_availability(oos) == Availability.OUT_OF_STOCK
+        assert detect_availability(in_stock) == Availability.IN_STOCK
+
+    def test_single_signal_alone_is_not_enough(self):
+        # Only data-available present, no buttons and no cart-url input.
+        html = """
+        <html><body>
+          <div class="availability product-availability" data-available="true"></div>
+        </body></html>
+        """
+        assert detect_availability(BeautifulSoup(html, "lxml")) == Availability.UNKNOWN
+
+
+class TestParseProductPage:
+    def test_extracts_name_price_id_and_url(self):
+        product = parse_product_page(_load_fixture("pdp_out_of_stock.html"), MA6_URL)
+
+        assert product.id == "10161784"
         assert "MA6" in product.name
         assert product.price == Decimal("1980")
-        assert str(product.product_url) == (
-            "https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-58-"
-            "30th-celebration-expected-september-2026-10161784.html"
-        )
-        assert product.availability == Availability.PRE_ORDER
-
-    def test_prices_are_parsed_for_every_product(self):
-        html = _load_fixture("search_results.html")
-        products = {p.id: p for p in parse_search_results(html)}
-
-        assert products["10161786"].price == Decimal("6500")
-        assert products["10161785"].price == Decimal("555")
-
-    def test_zero_results_returns_empty_list(self):
-        html = _load_fixture("no_results.html")
-        assert parse_search_results(html) == []
-
-    def test_unrecognized_page_structure_raises_parser_error(self):
-        html = _load_fixture("malformed.html")
-        with pytest.raises(ParserError):
-            parse_search_results(html)
-
-    def test_missing_price_falls_back_to_unknown_availability(self):
-        html = _load_fixture("missing_price.html")
-        products = parse_search_results(html)
-
-        assert len(products) == 1
-        assert products[0].price is None
-        assert products[0].availability == Availability.UNKNOWN
-
-    def test_out_of_stock_signals_are_combined_not_single_signal(self):
-        html = _load_fixture("out_of_stock.html")
-        products = parse_search_results(html)
-
-        assert len(products) == 1
-        product = products[0]
-        # Despite a price being present (a positive signal), the CSS class
-        # AND badge text (negative signals) must win — proving multiple
-        # signals are combined rather than any single one deciding alone.
+        assert str(product.product_url) == MA6_URL
         assert product.availability == Availability.OUT_OF_STOCK
 
-    def test_checked_at_is_populated_and_timezone_aware(self):
-        html = _load_fixture("search_results.html")
-        products = parse_search_results(html)
+    def test_in_stock_page_parses_as_in_stock(self):
+        product = parse_product_page(_load_fixture("pdp_in_stock.html"), MA6_URL)
+        assert product.availability == Availability.IN_STOCK
 
-        for product in products:
-            assert product.checked_at.tzinfo is not None
+    def test_checked_at_is_timezone_aware(self):
+        product = parse_product_page(_load_fixture("pdp_out_of_stock.html"), MA6_URL)
+        assert product.checked_at.tzinfo is not None
 
+    def test_non_product_page_raises_parser_error(self):
+        with pytest.raises(ParserError):
+            parse_product_page(_load_fixture("pdp_malformed.html"), MA6_URL)
 
-class TestParseTileEdgeCases:
-    """Defensive branches (_parse_tile / _extract_url / _extract_price)
-    that a well-formed live page never exercises but a changed/broken page
-    could — see tests/fixtures/edge_cases.html."""
+    def test_product_id_falls_back_to_url_when_data_pid_missing(self):
+        html = """
+        <html><body>
+          <h1 class="product-name">Some Product</h1>
+        </body></html>
+        """
+        product = parse_product_page(html, MA6_URL)
+        assert product.id == "10161784"  # recovered from the URL slug
 
-    def test_tile_without_data_pid_is_skipped(self):
-        html = _load_fixture("edge_cases.html")
-        products = {p.id: p for p in parse_search_results(html)}
+    def test_missing_price_is_none_not_an_error(self):
+        html = """
+        <html><body>
+          <div data-pid="10161784"><h1 class="product-name">Some Product</h1></div>
+        </body></html>
+        """
+        product = parse_product_page(html, MA6_URL)
+        assert product.price is None
+        assert product.availability == Availability.UNKNOWN
 
-        # Only the 2 well-formed tiles (33333333, 44444444) survive out of
-        # the 5 tiles in the fixture; the pid-less tile contributes nothing.
-        assert len(products) == 2
+    def test_carousel_product_id_does_not_leak_into_the_result(self):
+        # Regression: a PDP renders related-product carousels whose tiles
+        # carry their own data-pid. A page-wide lookup returned the
+        # carousel's id (10132862) instead of the real product (10161784),
+        # which would have collapsed all three monitored pages onto one
+        # state key and corrupted repeat-alert throttling.
+        product = parse_product_page(_load_fixture("pdp_with_carousel.html"), MA6_URL)
 
-    def test_tile_without_name_is_skipped(self):
-        html = _load_fixture("edge_cases.html")
-        products = {p.id: p for p in parse_search_results(html)}
+        assert product.id == "10161784"
+        assert product.id != "10132862"
 
-        assert "11111111" not in products
+    def test_carousel_price_does_not_leak_into_the_result(self):
+        product = parse_product_page(_load_fixture("pdp_with_carousel.html"), MA6_URL)
 
-    def test_tile_without_href_is_skipped(self):
-        html = _load_fixture("edge_cases.html")
-        products = {p.id: p for p in parse_search_results(html)}
+        assert product.price == Decimal("1980")  # not the carousel's ฿499
 
-        assert "22222222" not in products
+    def test_carousel_does_not_affect_availability(self):
+        product = parse_product_page(_load_fixture("pdp_with_carousel.html"), MA6_URL)
+        assert product.availability == Availability.OUT_OF_STOCK
 
-    def test_absolute_url_is_preserved_as_is(self):
-        html = _load_fixture("edge_cases.html")
-        products = {p.id: p for p in parse_search_results(html)}
+    def test_product_id_comes_from_url_even_if_page_pid_differs(self):
+        # The URL is what we actually requested, so it wins over any id the
+        # page happens to render.
+        html = """
+        <html><body>
+          <div class="product-detail" data-pid="99999999">
+            <h1 class="product-name">Some Product</h1>
+          </div>
+        </body></html>
+        """
+        assert parse_product_page(html, MA6_URL).id == "10161784"
 
-        assert str(products["33333333"].product_url) == (
-            "https://www.toysrus.co.th/th-th/absolute-url-product.html"
-        )
+    def test_falls_back_to_scoped_pid_when_url_has_no_id(self):
+        html = """
+        <html><body>
+          <div class="product-detail" data-pid="10161784">
+            <h1 class="product-name">Some Product</h1>
+          </div>
+        </body></html>
+        """
+        assert parse_product_page(html, "https://example.test/no-id-here").id == "10161784"
 
     def test_unparseable_price_falls_back_to_none(self):
-        html = _load_fixture("edge_cases.html")
-        products = {p.id: p for p in parse_search_results(html)}
-
-        assert products["44444444"].price is None
-        assert products["44444444"].availability == Availability.UNKNOWN
+        html = """
+        <html><body>
+          <div data-pid="10161784">
+            <h1 class="product-name">Some Product</h1>
+            <div class="prices"><span class="sales"><span class="value">12.34.56</span></span></div>
+          </div>
+        </body></html>
+        """
+        product = parse_product_page(html, MA6_URL)
+        assert product.price is None

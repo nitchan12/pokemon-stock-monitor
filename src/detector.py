@@ -1,133 +1,147 @@
-"""detector.py — compares freshly-scraped products against the last known
-state and returns a list of change Events.
+"""detector.py — decides which products should trigger a Telegram alert.
 
-This module performs no I/O and no parsing: it is a pure function of
-"new products" + "previous state" -> "events". Keeping it pure makes it
-trivial to unit test exhaustively (see tests/test_detector.py) and keeps
-notification logic (notifier.py) completely decoupled from diffing logic.
+Scope is deliberately narrow: this monitor exists to answer one question —
+*"can I buy it right now?"* — so the only event it emits is
+:data:`EventType.IN_STOCK`. Price changes, new SKUs, and disappearing
+products are intentionally not reported.
+
+Alerting policy ("limited repeat")
+-----------------------------------
+* A product that has just become available alerts immediately.
+* While it *stays* available, it re-alerts at most
+  ``settings.max_notify_count`` times in total, spaced at least
+  ``settings.repeat_interval_minutes`` apart.
+* Once the cap is reached, it goes quiet even though the product is still
+  in stock.
+* The counters reset the moment the product is no longer IN_STOCK, so a
+  later restock alerts again from scratch.
+
+:data:`Availability.UNKNOWN` never alerts — an ambiguous page must not send
+the user chasing a product they cannot actually buy.
+
+This module is a pure function of (products, previous state, now) so it is
+exhaustively unit-testable without mocking time or the filesystem.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from datetime import datetime, timedelta
 from enum import Enum
 
-from src.models import Availability, Product
+from src.models import Availability, Product, ProductState
 
-# Availability values that represent "a customer could plausibly buy this
-# right now" — used to decide BACK_IN_STOCK / OUT_OF_STOCK transitions.
-# UNKNOWN is deliberately excluded from both sides: a transition into/out of
-# UNKNOWN is not a confident enough signal to notify on (see parser.py's
-# documented UNKNOWN fallback).
-PURCHASABLE_STATES = frozenset({Availability.IN_STOCK, Availability.PRE_ORDER})
+# Sentinel meaning "this product has never been alerted in the current
+# in-stock streak", used for readability instead of a bare 0.
+NO_ALERTS_SENT_YET = 0
 
 
 class EventType(str, Enum):
-    """Kinds of change this detector can report."""
+    """The single kind of event this monitor reports."""
 
-    NEW_PRODUCT = "NEW_PRODUCT"
-    PRICE_CHANGED = "PRICE_CHANGED"
-    BACK_IN_STOCK = "BACK_IN_STOCK"
-    OUT_OF_STOCK = "OUT_OF_STOCK"
-    PRODUCT_REMOVED = "PRODUCT_REMOVED"
+    IN_STOCK = "IN_STOCK"
 
 
 @dataclass(frozen=True, slots=True)
 class Event:
-    """A single detected change for a single product.
+    """A product that is available and is due for an alert.
 
-    ``product`` always holds the most recent known Product data: for
-    PRODUCT_REMOVED this is the last-seen product (it no longer appears in
-    the new scrape), for every other event type it is the freshly-scraped
-    product.
+    ``is_repeat`` lets the notifier word a follow-up reminder differently
+    from the first "it just came in stock" alert. ``notify_number`` is
+    1-based (1 = first alert of this streak).
     """
 
     event_type: EventType
     product: Product
-    old_price: Decimal | None = None
-    new_price: Decimal | None = None
-    old_availability: Availability | None = None
-    new_availability: Availability | None = None
+    notify_number: int
+    is_repeat: bool
 
 
-def detect_changes(
-    new_products: list[Product],
-    previous_state: dict[str, Product],
-) -> list[Event]:
-    """Compare `new_products` (this run's scrape) against `previous_state`
-    (last saved state, keyed by product id) and return every detected
-    change as an :class:`Event`. Order is deterministic (sorted by product
-    id, NEW_PRODUCT/PRICE_CHANGED/availability-changes before
-    PRODUCT_REMOVED) so callers and tests get stable output.
+@dataclass(frozen=True, slots=True)
+class DetectionResult:
+    """Everything ``main`` needs after a detection pass.
+
+    ``events`` are the alerts to send; ``new_state`` is the updated
+    per-product bookkeeping to persist, already reflecting the alerts that
+    are about to be sent.
+    """
+
+    events: list[Event]
+    new_state: dict[str, ProductState]
+
+
+def detect_in_stock(
+    products: list[Product],
+    previous_state: dict[str, ProductState],
+    now: datetime,
+    max_notify_count: int,
+    repeat_interval_minutes: int,
+) -> DetectionResult:
+    """Return the alerts to send plus the state to persist.
+
+    Products are processed in sorted-id order so output is deterministic.
     """
     events: list[Event] = []
-    new_by_id = {product.id: product for product in new_products}
+    new_state: dict[str, ProductState] = {}
 
-    for product_id in sorted(new_by_id):
-        current = new_by_id[product_id]
-        previous = previous_state.get(product_id)
+    for product in sorted(products, key=lambda p: p.id):
+        previous = previous_state.get(product.id)
 
-        if previous is None:
-            events.append(Event(event_type=EventType.NEW_PRODUCT, product=current))
+        if product.availability is not Availability.IN_STOCK:
+            # Not buyable (OUT_OF_STOCK or UNKNOWN): record the observation
+            # and reset the alert counters for the next restock.
+            new_state[product.id] = ProductState(
+                product=product,
+                notify_count=NO_ALERTS_SENT_YET,
+                last_notified_at=None,
+            )
             continue
 
-        events.extend(_diff_existing_product(previous, current))
+        already_sent = previous.notify_count if previous is not None else NO_ALERTS_SENT_YET
+        last_sent_at = previous.last_notified_at if previous is not None else None
 
-    removed_ids = sorted(set(previous_state) - set(new_by_id))
-    for product_id in removed_ids:
-        events.append(
-            Event(event_type=EventType.PRODUCT_REMOVED, product=previous_state[product_id])
-        )
-
-    return events
-
-
-def _diff_existing_product(previous: Product, current: Product) -> list[Event]:
-    events: list[Event] = []
-
-    if previous.price != current.price:
-        events.append(
-            Event(
-                event_type=EventType.PRICE_CHANGED,
-                product=current,
-                old_price=previous.price,
-                new_price=current.price,
-            )
-        )
-
-    if previous.availability != current.availability:
-        # Only a genuine OUT_OF_STOCK <-> purchasable transition fires an
-        # event. UNKNOWN is excluded from both sides on purpose: e.g.
-        # UNKNOWN -> IN_STOCK (first confident parse of a previously
-        # ambiguous tile) or IN_STOCK -> UNKNOWN (parser temporarily lost
-        # its signal) are low-confidence and would be noisy to notify on.
-        became_purchasable = (
-            previous.availability == Availability.OUT_OF_STOCK
-            and current.availability in PURCHASABLE_STATES
-        )
-        became_out_of_stock = (
-            previous.availability in PURCHASABLE_STATES
-            and current.availability == Availability.OUT_OF_STOCK
-        )
-
-        if became_purchasable:
+        if _should_alert(
+            already_sent=already_sent,
+            last_sent_at=last_sent_at,
+            now=now,
+            max_notify_count=max_notify_count,
+            repeat_interval_minutes=repeat_interval_minutes,
+        ):
+            notify_number = already_sent + 1
             events.append(
                 Event(
-                    event_type=EventType.BACK_IN_STOCK,
-                    product=current,
-                    old_availability=previous.availability,
-                    new_availability=current.availability,
+                    event_type=EventType.IN_STOCK,
+                    product=product,
+                    notify_number=notify_number,
+                    is_repeat=already_sent > NO_ALERTS_SENT_YET,
                 )
             )
-        elif became_out_of_stock:
-            events.append(
-                Event(
-                    event_type=EventType.OUT_OF_STOCK,
-                    product=current,
-                    old_availability=previous.availability,
-                    new_availability=current.availability,
-                )
+            new_state[product.id] = ProductState(
+                product=product,
+                notify_count=notify_number,
+                last_notified_at=now,
+            )
+        else:
+            # Still in stock but throttled (cap reached, or too soon since
+            # the last alert): carry the existing counters forward unchanged.
+            new_state[product.id] = ProductState(
+                product=product,
+                notify_count=already_sent,
+                last_notified_at=last_sent_at,
             )
 
-    return events
+    return DetectionResult(events=events, new_state=new_state)
+
+
+def _should_alert(
+    already_sent: int,
+    last_sent_at: datetime | None,
+    now: datetime,
+    max_notify_count: int,
+    repeat_interval_minutes: int,
+) -> bool:
+    if already_sent >= max_notify_count:
+        return False
+    if already_sent == NO_ALERTS_SENT_YET or last_sent_at is None:
+        return True
+    return now - last_sent_at >= timedelta(minutes=repeat_interval_minutes)

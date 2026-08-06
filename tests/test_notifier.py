@@ -16,7 +16,8 @@ from src.detector import Event, EventType
 from src.models import Availability, Product
 from src.notifier import TelegramNotifier, format_event_message
 
-CHECKED_AT = datetime(2026, 8, 6, 5, 0, 0, tzinfo=timezone.utc)
+CHECKED_AT = datetime(2026, 8, 6, 5, 0, 0, tzinfo=timezone.utc)  # 12:00 ICT
+MAX_NOTIFY = 3
 
 
 def make_product(name: str = "Pokemon TCG MA6", price: str | None = "1980") -> Product:
@@ -24,9 +25,18 @@ def make_product(name: str = "Pokemon TCG MA6", price: str | None = "1980") -> P
         id="10161784",
         name=name,
         price=Decimal(price) if price is not None else None,
-        availability=Availability.PRE_ORDER,
+        availability=Availability.IN_STOCK,
         product_url="https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-10161784.html",
         checked_at=CHECKED_AT,
+    )
+
+
+def make_event(notify_number: int = 1, is_repeat: bool = False, **kwargs) -> Event:
+    return Event(
+        event_type=EventType.IN_STOCK,
+        product=make_product(**kwargs),
+        notify_number=notify_number,
+        is_repeat=is_repeat,
     )
 
 
@@ -48,39 +58,32 @@ def _patch_client(post_side_effect):
 
 
 class TestFormatEventMessage:
-    def test_new_product_message_contains_all_fields(self):
-        event = Event(event_type=EventType.NEW_PRODUCT, product=make_product())
-        text = format_event_message(event)
+    def test_first_alert_contains_all_fields(self):
+        text = format_event_message(make_event(), MAX_NOTIFY)
 
-        assert "พบสินค้าใหม่" in text
+        assert "มีสินค้าแล้ว" in text
         assert "Pokemon TCG MA6" in text
         assert "฿1,980" in text
-        assert "เปิดพรีออเดอร์" in text
         assert "toysrus.co.th" in text
-        assert "06/08/2026" in text
+        assert "06/08/2026 12:00" in text
 
-    def test_price_changed_message_shows_old_and_new_price(self):
-        event = Event(
-            event_type=EventType.PRICE_CHANGED,
-            product=make_product(),
-            old_price=Decimal("1980"),
-            new_price=Decimal("2200"),
-        )
-        text = format_event_message(event)
+    def test_first_alert_is_not_labelled_as_a_repeat(self):
+        text = format_event_message(make_event(notify_number=1, is_repeat=False), MAX_NOTIFY)
+        assert "เตือนซ้ำ" not in text
+        assert "แจ้งเตือนครั้งที่" not in text
 
-        assert "ราคาเดิม: ฿1,980" in text
-        assert "ราคาใหม่: ฿2,200" in text
+    def test_repeat_alert_is_labelled_and_shows_the_count(self):
+        text = format_event_message(make_event(notify_number=2, is_repeat=True), MAX_NOTIFY)
+
+        assert "เตือนซ้ำ" in text
+        assert "แจ้งเตือนครั้งที่ 2 จากสูงสุด 3 ครั้ง" in text
 
     def test_missing_price_uses_unspecified_label(self):
-        event = Event(event_type=EventType.NEW_PRODUCT, product=make_product(price=None))
-        text = format_event_message(event)
-
+        text = format_event_message(make_event(price=None), MAX_NOTIFY)
         assert "ไม่ระบุราคา" in text
 
     def test_product_name_is_html_escaped(self):
-        product = make_product(name="<script>alert(1)</script>")
-        event = Event(event_type=EventType.NEW_PRODUCT, product=product)
-        text = format_event_message(event)
+        text = format_event_message(make_event(name="<script>alert(1)</script>"), MAX_NOTIFY)
 
         assert "<script>" not in text
         assert "&lt;script&gt;" in text
@@ -89,76 +92,56 @@ class TestFormatEventMessage:
 class TestTelegramNotifierSendEvent:
     def test_successful_send_returns_true(self):
         patcher, mock_client = _patch_client([_make_response(200)])
-        event = Event(event_type=EventType.NEW_PRODUCT, product=make_product())
-
         with patcher:
-            result = TelegramNotifier("TEST", "chat1").send_event(event)
+            result = TelegramNotifier("TEST", "chat1").send_event(make_event())
 
         assert result is True
         assert mock_client.post.call_count == 1
 
     def test_retries_transient_failure_then_succeeds(self):
         patcher, mock_client = _patch_client([httpx.ConnectError("boom"), _make_response(200)])
-        event = Event(event_type=EventType.NEW_PRODUCT, product=make_product())
-
         with patcher:
-            result = TelegramNotifier("TEST", "chat1").send_event(event)
+            result = TelegramNotifier("TEST", "chat1").send_event(make_event())
 
         assert result is True
         assert mock_client.post.call_count == 2
 
     def test_server_error_is_retried_then_fails_gracefully(self):
         patcher, mock_client = _patch_client([_make_response(500)] * 3)
-        event = Event(event_type=EventType.NEW_PRODUCT, product=make_product())
-
         with patcher:
-            result = TelegramNotifier("TEST", "chat1").send_event(event)
+            result = TelegramNotifier("TEST", "chat1").send_event(make_event())
 
         assert result is False
         assert mock_client.post.call_count == 3
 
-    def test_bad_token_400_is_not_retried(self):
+    def test_bad_token_is_not_retried(self):
         patcher, mock_client = _patch_client([_make_response(401, text="Unauthorized")])
-        event = Event(event_type=EventType.NEW_PRODUCT, product=make_product())
-
         with patcher:
-            result = TelegramNotifier("bad-token", "chat1").send_event(event)
+            result = TelegramNotifier("bad-token", "chat1").send_event(make_event())
 
         assert result is False
         assert mock_client.post.call_count == 1
 
     def test_never_raises_on_unexpected_error(self):
-        patcher, _mock_client = _patch_client(RuntimeError("boom"))
-        event = Event(event_type=EventType.NEW_PRODUCT, product=make_product())
-
+        patcher, _ = _patch_client(RuntimeError("boom"))
         with patcher:
-            # Should not raise.
-            TelegramNotifier("TEST", "chat1").send_event(event)
+            result = TelegramNotifier("TEST", "chat1").send_event(make_event())
+        assert result is False
 
 
 class TestTelegramNotifierSendEvents:
     def test_sends_all_events_and_counts_successes(self):
         patcher, mock_client = _patch_client([_make_response(200), _make_response(200)])
-        events = [
-            Event(event_type=EventType.NEW_PRODUCT, product=make_product()),
-            Event(event_type=EventType.OUT_OF_STOCK, product=make_product()),
-        ]
-
         with patcher:
-            sent_count = TelegramNotifier("TEST", "chat1").send_events(events)
+            sent = TelegramNotifier("TEST", "chat1").send_events([make_event(), make_event()])
 
-        assert sent_count == 2
+        assert sent == 2
         assert mock_client.post.call_count == 2
 
     def test_one_failure_does_not_stop_remaining_sends(self):
-        patcher, mock_client = _patch_client([_make_response(401)] + [_make_response(200)] * 1)
-        events = [
-            Event(event_type=EventType.NEW_PRODUCT, product=make_product()),
-            Event(event_type=EventType.OUT_OF_STOCK, product=make_product()),
-        ]
-
+        patcher, mock_client = _patch_client([_make_response(401), _make_response(200)])
         with patcher:
-            sent_count = TelegramNotifier("TEST", "chat1").send_events(events)
+            sent = TelegramNotifier("TEST", "chat1").send_events([make_event(), make_event()])
 
-        assert sent_count == 1
+        assert sent == 1
         assert mock_client.post.call_count == 2

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from src.models import Availability, Product, StoredState
+from src.models import Availability, Product, ProductState, StoredState
 from src.storage import StorageError, backup_state, load_state, save_state
 
 CHECKED_AT = datetime(2026, 8, 6, 12, 0, 0, tzinfo=timezone.utc)
@@ -30,6 +30,14 @@ def make_product(id: str = "1") -> Product:
     )
 
 
+def make_state(id: str = "1", notify_count: int = 0) -> ProductState:
+    return ProductState(
+        product=make_product(id),
+        notify_count=notify_count,
+        last_notified_at=CHECKED_AT if notify_count else None,
+    )
+
+
 class TestLoadState:
     def test_missing_file_returns_empty_state(self, tmp_path: Path):
         state = load_state(tmp_path / "state.json")
@@ -38,24 +46,36 @@ class TestLoadState:
 
     def test_round_trips_saved_state(self, tmp_path: Path):
         path = tmp_path / "state.json"
-        original = StoredState(products={"1": make_product("1")}, last_checked_at=CHECKED_AT)
+        original = StoredState(
+            products={"1": make_state("1", notify_count=2)}, last_checked_at=CHECKED_AT
+        )
         save_state(path, original)
 
         loaded = load_state(path)
-        assert loaded.products["1"].id == "1"
-        assert loaded.products["1"].price == Decimal("1000")
+        assert loaded.products["1"].product.id == "1"
+        assert loaded.products["1"].product.price == Decimal("1000")
         assert loaded.last_checked_at == CHECKED_AT
+
+    def test_round_trip_preserves_notification_counters(self, tmp_path: Path):
+        # These counters drive the limited-repeat alert policy across runs;
+        # losing them would cause repeat alerts to restart every run.
+        path = tmp_path / "state.json"
+        save_state(path, StoredState(products={"1": make_state("1", notify_count=3)}))
+
+        loaded = load_state(path)
+        assert loaded.products["1"].notify_count == 3
+        assert loaded.products["1"].last_notified_at == CHECKED_AT
 
     def test_corrupt_file_falls_back_to_backup(self, tmp_path: Path):
         path = tmp_path / "state.json"
-        good_state = StoredState(products={"1": make_product("1")})
+        good_state = StoredState(products={"1": make_state("1")})
         save_state(path, good_state)  # writes state.json, no .bak yet (first write)
         save_state(path, good_state)  # second write creates state.json.bak from the good file
 
         path.write_text("{not valid json!!", encoding="utf-8")
 
         loaded = load_state(path)
-        assert loaded.products["1"].id == "1"
+        assert loaded.products["1"].product.id == "1"
 
     def test_corrupt_file_with_no_backup_raises_storage_error(self, tmp_path: Path):
         path = tmp_path / "state.json"
@@ -66,7 +86,7 @@ class TestLoadState:
 
     def test_invalid_schema_falls_back_to_backup(self, tmp_path: Path):
         path = tmp_path / "state.json"
-        good_state = StoredState(products={"1": make_product("1")})
+        good_state = StoredState(products={"1": make_state("1")})
         save_state(path, good_state)
         save_state(path, good_state)  # ensure a valid .bak exists
 
@@ -74,7 +94,7 @@ class TestLoadState:
         path.write_text('{"products": "this should be a dict, not a string"}', encoding="utf-8")
 
         loaded = load_state(path)
-        assert loaded.products["1"].id == "1"
+        assert loaded.products["1"].product.id == "1"
 
 
 class TestSaveState:
@@ -85,15 +105,15 @@ class TestSaveState:
 
     def test_no_leftover_temp_files(self, tmp_path: Path):
         path = tmp_path / "state.json"
-        save_state(path, StoredState(products={"1": make_product("1")}))
+        save_state(path, StoredState(products={"1": make_state("1")}))
 
         leftovers = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
         assert leftovers == []
 
     def test_overwrites_existing_file_atomically(self, tmp_path: Path):
         path = tmp_path / "state.json"
-        save_state(path, StoredState(products={"1": make_product("1")}))
-        save_state(path, StoredState(products={"2": make_product("2")}))
+        save_state(path, StoredState(products={"1": make_state("1")}))
+        save_state(path, StoredState(products={"2": make_state("2")}))
 
         loaded = load_state(path)
         assert set(loaded.products) == {"2"}
