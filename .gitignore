@@ -15,8 +15,10 @@ dist/
 # Environment / secrets
 .env
 
-# Test / coverage
+# Test / coverage / lint / type-check caches
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 .coverage.*
 htmlcov/

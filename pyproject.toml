@@ -25,3 +25,7 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 source = ["src"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
