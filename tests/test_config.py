@@ -60,12 +60,16 @@ class TestDefaults:
         assert settings.max_notify_count == DEFAULT_MAX_NOTIFY_COUNT
         assert settings.repeat_interval_minutes == DEFAULT_REPEAT_INTERVAL_MINUTES
 
-    def test_three_ma6_product_pages_are_monitored_by_default(self):
-        assert len(DEFAULT_PRODUCT_URLS) == 3
+    def test_default_pages_are_all_ma6_with_distinct_ids(self):
+        assert DEFAULT_PRODUCT_URLS  # never empty
         assert all("ma6" in url for url in DEFAULT_PRODUCT_URLS)
-        # Each URL must carry a distinct product id.
         ids = {url.rsplit("-", 1)[-1] for url in DEFAULT_PRODUCT_URLS}
-        assert len(ids) == 3
+        assert len(ids) == len(DEFAULT_PRODUCT_URLS)
+
+    def test_delisted_product_is_not_monitored(self):
+        # 10161784 returns HTTP 410 Gone and is absent from search results.
+        # Keeping it would mean a failing fetch and an ERROR log every run.
+        assert not any("10161784" in url for url in DEFAULT_PRODUCT_URLS)
 
 
 class TestOverrides:

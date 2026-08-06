@@ -58,6 +58,61 @@ class TestDetectAvailability:
         assert detect_availability(oos) == Availability.OUT_OF_STOCK
         assert detect_availability(in_stock) == Availability.IN_STOCK
 
+    def test_populated_cart_url_does_not_imply_in_stock(self):
+        # Regression for a bug that silently disabled the whole monitor:
+        # input.add-to-cart-url carries a value in BOTH states in the raw
+        # server HTML (it only looked empty in the post-JavaScript DOM).
+        # Treating it as an in-stock signal deadlocked every vote at 2-vs-1
+        # and reported UNKNOWN forever, so no alert could ever fire.
+        html = _load_fixture("pdp_out_of_stock.html")
+        assert 'class="add-to-cart-url" value="' in html  # value really is set
+        assert detect_availability(BeautifulSoup(html, "lxml")) == Availability.OUT_OF_STOCK
+
+    def test_json_ld_out_of_stock_is_counted(self):
+        html = """
+        <html><body>
+          <script type="application/ld+json">
+          {"@type":"Product","offers":{"availability":"http://schema.org/OutOfStock"}}
+          </script>
+          <div class="availability product-availability" data-available="false"></div>
+        </body></html>
+        """
+        assert detect_availability(BeautifulSoup(html, "lxml")) == Availability.OUT_OF_STOCK
+
+    def test_json_ld_in_stock_is_counted(self):
+        html = """
+        <html><body>
+          <script type="application/ld+json">
+          {"@type":"Product","offers":{"availability":"http://schema.org/InStock"}}
+          </script>
+          <div class="availability product-availability" data-available="true"></div>
+        </body></html>
+        """
+        assert detect_availability(BeautifulSoup(html, "lxml")) == Availability.IN_STOCK
+
+    def test_malformed_json_ld_abstains_instead_of_breaking(self):
+        html = """
+        <html><body>
+          <script type="application/ld+json">{ this is not valid json </script>
+          <div class="availability product-availability" data-available="false"></div>
+          <button class="back-in-store"></button>
+        </body></html>
+        """
+        # The two good signals still carry the verdict.
+        assert detect_availability(BeautifulSoup(html, "lxml")) == Availability.OUT_OF_STOCK
+
+    def test_unrecognized_json_ld_availability_abstains(self):
+        html = """
+        <html><body>
+          <script type="application/ld+json">
+          {"@type":"Product","offers":{"availability":"http://schema.org/PreOrder"}}
+          </script>
+          <div class="availability product-availability" data-available="false"></div>
+        </body></html>
+        """
+        # Only one usable signal remains -> not enough to decide.
+        assert detect_availability(BeautifulSoup(html, "lxml")) == Availability.UNKNOWN
+
     def test_single_signal_alone_is_not_enough(self):
         # Only data-available present, no buttons and no cart-url input.
         html = """

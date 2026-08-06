@@ -8,34 +8,34 @@ All selectors below were captured from the live toysrus.co.th PDP markup
 response** — i.e. the HTML before any JavaScript runs — for a product in
 each availability state. They are verified, not guessed.
 
-Availability markup, verified in both states
---------------------------------------------
-OUT OF STOCK (all three MA6 pages at time of writing)::
+Availability signals, measured against the RAW server HTML of a real
+out-of-stock page and a real in-stock page:
 
-    <input type="hidden" class="add-to-cart-url">          <-- no value
-    <button class="btn ... btn-secondary back-in-store" data-back-in-stock>
-      ไม่มี <span class="d-block">แจ้งเตือนฉันเมื่อมีของกลับมาพร้อมจำหน่าย</span>
-    </button>
-    <div class="availability product-availability"
-         data-ready-to-order="true" data-available="false" ...>
+===============================  ==============  ==============  =========
+signal                           out of stock    in stock        usable?
+===============================  ==============  ==============  =========
+JSON-LD ``offers.availability``  ``OutOfStock``  ``InStock``     yes
+``data-available`` attribute     ``"false"``     ``"true"``      yes
+action button rendered           back-in-store   add-to-cart     yes
+``data-ready-to-order``          ``"true"``      ``"true"``      NO
+``add-to-cart-url`` has value    set             set             NO
+===============================  ==============  ==============  =========
 
-IN STOCK (verified against a different, in-stock product on the same site)::
+The last two rows are recorded deliberately: both look like plausible
+availability signals and neither actually discriminates.
 
-    <input type="hidden" class="add-to-cart-url" value=".../Cart-AddProduct">
-    <button class="btn ... btn-info add-to-cart" data-pid="..." data-add-to-cart>
-      เพิ่มสินค้าไปยังรถเข็น
-    </button>
-    <div class="availability product-availability"
-         data-ready-to-order="true" data-available="true" ...>
-
-IMPORTANT: ``data-ready-to-order`` is ``"true"`` in BOTH states and is
-therefore useless for deciding availability — it must not be used as a
-signal. Only ``data-available`` differs, and it is corroborated by which
-button is rendered and whether the add-to-cart URL input carries a value.
+``add-to-cart-url`` in particular caused a real bug. Inspecting the
+*live DOM* in a browser showed it empty on an out-of-stock page, so it was
+adopted as a signal — but JavaScript had cleared it after load. The raw
+HTML that httpx receives has it populated in both states, so it voted
+"in stock" on every page, permanently deadlocking the vote at 2-vs-1 and
+reporting UNKNOWN forever. Every signal here is now verified against raw
+HTML rather than the rendered DOM.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -59,7 +59,7 @@ PRODUCT_ROOT_SELECTOR = ".product-detail"
 AVAILABILITY_SELECTOR = ".availability.product-availability"
 ADD_TO_CART_BUTTON_SELECTOR = "button.add-to-cart"
 BACK_IN_STORE_BUTTON_SELECTOR = "button.back-in-store"
-ADD_TO_CART_URL_INPUT_SELECTOR = "input.add-to-cart-url"
+JSON_LD_SELECTOR = 'script[type="application/ld+json"]'
 PRODUCT_NAME_SELECTOR = "h1.product-name"
 PRODUCT_PRICE_SELECTOR = ".prices .sales .value"
 PRODUCT_ID_ATTRIBUTE = "data-pid"
@@ -124,9 +124,9 @@ def detect_availability(soup: BeautifulSoup) -> Availability:
     """Decide availability by combining three independent page signals.
 
     Signals (each votes IN_STOCK / OUT_OF_STOCK / abstains):
-      1. ``data-available`` on the product-availability block.
-      2. Which action button is rendered: ``add-to-cart`` vs ``back-in-store``.
-      3. Whether the hidden ``add-to-cart-url`` input carries a value.
+      1. schema.org ``offers.availability`` in the page's JSON-LD block.
+      2. ``data-available`` on the product-availability block.
+      3. Which action button is rendered: ``add-to-cart`` vs ``back-in-store``.
 
     A verdict requires at least :data:`MIN_AGREEING_SIGNALS` votes on one
     side and none on the other. Any disagreement, or too few signals,
@@ -134,6 +134,12 @@ def detect_availability(soup: BeautifulSoup) -> Availability:
     """
     in_stock_votes = 0
     out_of_stock_votes = 0
+
+    json_ld_verdict = _read_json_ld_availability(soup)
+    if json_ld_verdict is Availability.IN_STOCK:
+        in_stock_votes += 1
+    elif json_ld_verdict is Availability.OUT_OF_STOCK:
+        out_of_stock_votes += 1
 
     availability_block = soup.select_one(AVAILABILITY_SELECTOR)
     if availability_block is not None:
@@ -151,14 +157,6 @@ def detect_availability(soup: BeautifulSoup) -> Availability:
     elif has_back_in_store and not has_add_to_cart:
         out_of_stock_votes += 1
 
-    cart_url_input = soup.select_one(ADD_TO_CART_URL_INPUT_SELECTOR)
-    if cart_url_input is not None:
-        cart_url = cart_url_input.get("value")
-        if cart_url is not None and str(cart_url).strip():
-            in_stock_votes += 1
-        else:
-            out_of_stock_votes += 1
-
     if in_stock_votes >= MIN_AGREEING_SIGNALS and out_of_stock_votes == 0:
         return Availability.IN_STOCK
     if out_of_stock_votes >= MIN_AGREEING_SIGNALS and in_stock_votes == 0:
@@ -171,6 +169,50 @@ def detect_availability(soup: BeautifulSoup) -> Availability:
         out_of_stock_votes,
     )
     return Availability.UNKNOWN
+
+
+def _read_json_ld_availability(soup: BeautifulSoup) -> Availability | None:
+    """Read schema.org ``offers.availability`` from the page's JSON-LD.
+
+    Returns None (abstain from voting) if the block is absent, unparseable,
+    or carries an availability value we don't recognize — a malformed
+    third-party blob must never be able to swing the verdict.
+    """
+    for script in soup.select(JSON_LD_SELECTOR):
+        raw = script.string or script.get_text()
+        if not raw or not raw.strip():
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.debug("Skipping unparseable JSON-LD block")
+            continue
+
+        for candidate in data if isinstance(data, list) else [data]:
+            verdict = _availability_from_json_ld_node(candidate)
+            if verdict is not None:
+                return verdict
+    return None
+
+
+def _availability_from_json_ld_node(node: object) -> Availability | None:
+    if not isinstance(node, dict):
+        return None
+
+    offers = node.get("offers")
+    for offer in offers if isinstance(offers, list) else [offers]:
+        if not isinstance(offer, dict):
+            continue
+        raw = offer.get("availability")
+        if not isinstance(raw, str):
+            continue
+        value = raw.rsplit("/", 1)[-1].strip().lower()
+        if value == "instock":
+            return Availability.IN_STOCK
+        if value in {"outofstock", "soldout", "discontinued"}:
+            return Availability.OUT_OF_STOCK
+        logger.debug("Unrecognized JSON-LD availability value %r; abstaining", raw)
+    return None
 
 
 def _find_product_root(soup: BeautifulSoup) -> BeautifulSoup | Tag:
