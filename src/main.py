@@ -55,7 +55,7 @@ def run_once(settings: Settings | None = None) -> int:
             logger.error("โหลด Config ไม่สำเร็จ: %s", exc)
             return EXIT_CONFIG_ERROR
 
-    state = load_state(settings.state_file)
+    state = _load_state_safely(settings)
     logger.info("โหลด state เดิมสำเร็จ: มีสินค้าที่บันทึกไว้ %d รายการ", len(state.products))
 
     products = _collect_products(settings)
@@ -102,6 +102,27 @@ def run_once(settings: Settings | None = None) -> int:
 
     logger.info("[bold green]ตรวจสอบเสร็จสิ้น[/bold green]", extra={"markup": True})
     return EXIT_SUCCESS
+
+
+def _load_state_safely(settings: Settings) -> StoredState:
+    """Load persisted state, degrading to empty state if it is unusable.
+
+    A state file that cannot be read — corrupt, or written by an older
+    version with an incompatible schema — must not take the monitor down.
+    The cost of starting fresh is bounded and safe: out-of-stock products
+    are simply re-recorded, and an in-stock product alerts again, which is
+    the behavior we want anyway. Crashing instead would mean no alerts at
+    all until someone notices, which is strictly worse.
+    """
+    try:
+        return load_state(settings.state_file)
+    except StorageError as exc:
+        logger.error(
+            "อ่าน state เดิมไม่ได้ (%s) — เริ่มต้นใหม่จาก state ว่าง "
+            "อาจมีการแจ้งเตือนซ้ำหนึ่งรอบหากสินค้ามีของอยู่",
+            exc,
+        )
+        return StoredState()
 
 
 def _collect_products(settings: Settings) -> list[Product]:

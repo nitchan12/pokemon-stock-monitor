@@ -180,6 +180,36 @@ class TestNotification:
         assert saved_state.products["1"].notify_count == 1
 
 
+class TestUnreadableExistingState:
+    """A state file written by an older, incompatible version must not take
+    the monitor down — it should degrade to empty state and keep running."""
+
+    def test_unreadable_state_does_not_crash_the_run(self):
+        with (
+            patch("src.main.load_state", side_effect=StorageError("incompatible schema")),
+            patch("src.main.Scraper") as mock_scraper_cls,
+            patch("src.main.parse_product_page", return_value=make_product()),
+            patch("src.main.detect_in_stock", return_value=DetectionResult([], {})),
+            patch("src.main.save_state"),
+        ):
+            mock_scraper_cls.return_value.fetch_html.return_value = _ok_fetch()
+            assert run_once(settings=SETTINGS) == EXIT_SUCCESS
+
+    def test_unreadable_state_falls_back_to_empty_state(self):
+        with (
+            patch("src.main.load_state", side_effect=StorageError("incompatible schema")),
+            patch("src.main.Scraper") as mock_scraper_cls,
+            patch("src.main.parse_product_page", return_value=make_product()),
+            patch("src.main.detect_in_stock") as mock_detect,
+            patch("src.main.save_state"),
+        ):
+            mock_scraper_cls.return_value.fetch_html.return_value = _ok_fetch()
+            mock_detect.return_value = DetectionResult([], {})
+            run_once(settings=SETTINGS)
+
+        assert mock_detect.call_args.kwargs["previous_state"] == {}
+
+
 class TestStorageFailure:
     def test_save_failure_returns_storage_error(self):
         with (
