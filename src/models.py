@@ -55,3 +55,14 @@ class Product(BaseModel):
         if value is not None and value < 0:
             raise ValueError("price must not be negative")
         return value
+
+
+class StoredState(BaseModel):
+    """The full on-disk state persisted between runs (data/state.json).
+
+    Keyed by product id so lookups during change detection are O(1) and the
+    JSON stays stable/diffable across runs (no incidental key reordering).
+    """
+
+    products: dict[str, Product] = Field(default_factory=dict)
+    last_checked_at: datetime | None = None
