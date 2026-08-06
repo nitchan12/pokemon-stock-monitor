@@ -92,3 +92,44 @@ class TestParseSearchResults:
 
         for product in products:
             assert product.checked_at.tzinfo is not None
+
+
+class TestParseTileEdgeCases:
+    """Defensive branches (_parse_tile / _extract_url / _extract_price)
+    that a well-formed live page never exercises but a changed/broken page
+    could — see tests/fixtures/edge_cases.html."""
+
+    def test_tile_without_data_pid_is_skipped(self):
+        html = _load_fixture("edge_cases.html")
+        products = {p.id: p for p in parse_search_results(html)}
+
+        # Only the 2 well-formed tiles (33333333, 44444444) survive out of
+        # the 5 tiles in the fixture; the pid-less tile contributes nothing.
+        assert len(products) == 2
+
+    def test_tile_without_name_is_skipped(self):
+        html = _load_fixture("edge_cases.html")
+        products = {p.id: p for p in parse_search_results(html)}
+
+        assert "11111111" not in products
+
+    def test_tile_without_href_is_skipped(self):
+        html = _load_fixture("edge_cases.html")
+        products = {p.id: p for p in parse_search_results(html)}
+
+        assert "22222222" not in products
+
+    def test_absolute_url_is_preserved_as_is(self):
+        html = _load_fixture("edge_cases.html")
+        products = {p.id: p for p in parse_search_results(html)}
+
+        assert str(products["33333333"].product_url) == (
+            "https://www.toysrus.co.th/th-th/absolute-url-product.html"
+        )
+
+    def test_unparseable_price_falls_back_to_none(self):
+        html = _load_fixture("edge_cases.html")
+        products = {p.id: p for p in parse_search_results(html)}
+
+        assert products["44444444"].price is None
+        assert products["44444444"].availability == Availability.UNKNOWN
