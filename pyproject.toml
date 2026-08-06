@@ -1,0 +1,27 @@
+[tool.mypy]
+plugins = ["pydantic.mypy"]
+python_version = "3.12"
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+# UP042 (StrEnum) / UP017 (datetime.UTC) require Python 3.11+; the dev
+# sandbox runs 3.10, and (str, Enum) / timezone.utc remain fully valid on
+# the 3.12 production target, so these upgrades are intentionally skipped.
+ignore = ["UP042", "UP017"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src"]

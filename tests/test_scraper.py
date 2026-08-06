@@ -12,7 +12,11 @@ import httpx
 from src.scraper import Scraper
 
 
-def _make_response(status_code: int = 200, text: str = "<html>ok</html>", content_type: str = "text/html; charset=UTF-8") -> httpx.Response:
+def _make_response(
+    status_code: int = 200,
+    text: str = "<html>ok</html>",
+    content_type: str = "text/html; charset=UTF-8",
+) -> httpx.Response:
     return httpx.Response(
         status_code=status_code,
         text=text,
