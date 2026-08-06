@@ -16,11 +16,11 @@ from bs4 import BeautifulSoup
 from src.config import DEFAULT_PRODUCT_URLS
 from src.parser import (
     ADD_TO_CART_BUTTON_SELECTOR,
-    ADD_TO_CART_URL_INPUT_SELECTOR,
     AVAILABILITY_SELECTOR,
     BACK_IN_STORE_BUTTON_SELECTOR,
     PRODUCT_NAME_SELECTOR,
     PRODUCT_ROOT_SELECTOR,
+    _read_json_ld_availability,
     detect_availability,
 )
 from src.scraper import Scraper
@@ -49,27 +49,28 @@ def main() -> int:
         print(f"  product root found   : {soup.select_one(PRODUCT_ROOT_SELECTOR) is not None}")
         print(f"  product name found   : {soup.select_one(PRODUCT_NAME_SELECTOR) is not None}")
 
+        json_ld = _read_json_ld_availability(soup)
+        print(
+            "  1. JSON-LD availability : "
+            + (json_ld.value if json_ld is not None else "NOT FOUND / abstained")
+        )
+
         block = soup.select_one(AVAILABILITY_SELECTOR)
         if block is None:
-            print("  availability block   : NOT FOUND  <-- signal 1 missing")
+            print("  2. data-available       : NOT FOUND")
         else:
-            print(f"  availability block   : found, data-available={block.get('data-available')!r}")
+            print(f"  2. data-available       : {block.get('data-available')!r}")
 
         add_btn = soup.select_one(ADD_TO_CART_BUTTON_SELECTOR)
         back_btn = soup.select_one(BACK_IN_STORE_BUTTON_SELECTOR)
-        print(f"  add-to-cart button   : {'found' if add_btn else 'not found'}")
-        print(f"  back-in-store button : {'found' if back_btn else 'not found'}")
-        if add_btn is None and back_btn is None:
-            print("                         <-- signal 2 missing (neither button present)")
-
-        cart_input = soup.select_one(ADD_TO_CART_URL_INPUT_SELECTOR)
-        if cart_input is None:
-            print("  add-to-cart-url input: NOT FOUND  <-- signal 3 missing")
+        if add_btn is not None and back_btn is None:
+            print("  3. action button        : add-to-cart (in stock)")
+        elif back_btn is not None and add_btn is None:
+            print("  3. action button        : back-in-store (out of stock)")
         else:
-            value = cart_input.get("value")
-            print(f"  add-to-cart-url input: found, value={'set' if value else 'empty'}")
+            print("  3. action button        : inconclusive (both or neither present)")
 
-        print(f"  --> VERDICT          : {detect_availability(soup).value}")
+        print(f"  --> VERDICT             : {detect_availability(soup).value}")
 
         # Cheap tells for bot-detection / region-gated responses.
         lowered = html.lower()
