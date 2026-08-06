@@ -1,0 +1,72 @@
+name: Pokemon MA6 Stock Monitor
+
+on:
+  schedule:
+    # ทุก 15 นาที (เวลา UTC). GitHub Actions รับ cron ขั้นต่ำ 5 นาที แต่ในทาง
+    # ปฏิบัติ scheduled workflow มัก "ดีเลย์" ได้หลายนาทีถึงหลักสิบนาทีในช่วงที่
+    # ระบบมีงานหนาแน่น จึงไม่ควรคาดหวังความตรงเวลาระดับนาที
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}   # กดรันเองได้จากแท็บ Actions
+
+# กันไม่ให้สองรอบทำงานทับกัน มิเช่นนั้นจะชนกันตอน commit state กลับ repo
+concurrency:
+  group: stock-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # จำเป็นสำหรับ push ไฟล์ state กลับเข้า repo
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run stock monitor
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python -m src.main
+
+      # ขั้นตอนนี้จะไม่ทำงานหากขั้นตอนก่อนหน้าล้มเหลว (พฤติกรรม default ของ
+      # GitHub Actions) ซึ่งถูกต้องแล้ว — ไม่ควร commit state ที่อาจไม่สมบูรณ์
+      - name: Persist state back to repository
+        run: |
+          set -euo pipefail
+
+          if [ ! -f data/state.json ]; then
+            echo "ไม่พบ data/state.json — ข้ามขั้นตอนบันทึก state"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # ต้องใช้ -f เพราะ data/state.json อยู่ใน .gitignore โดยตั้งใจ
+          # (ไม่ต้องการให้ state ของเครื่อง dev ปนขึ้น repo) แต่บน Actions
+          # จำเป็นต้อง commit เพราะ runner เป็น ephemeral — หากไม่บันทึก
+          # ระบบจะมองว่าทุกสินค้าเป็น "ใหม่" และแจ้งเตือนซ้ำทุกรอบ
+          git add -f data/state.json
+
+          if git diff --staged --quiet; then
+            echo "state ไม่เปลี่ยนแปลง — ไม่ต้อง commit"
+            exit 0
+          fi
+
+          git commit -m "chore: update stock state [skip ci]"
+
+          # ดึงงานที่อาจถูก push ระหว่างนี้มา rebase ก่อน เพื่อกัน push ชนกัน
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

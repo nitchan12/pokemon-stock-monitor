@@ -17,7 +17,7 @@ Toys"R"Us ประเทศไทย และแจ้งเตือนผ่
 - [Project Structure](#project-structure)
 - [Testing](#testing)
 - [Known Limitations](#known-limitations)
-- [Future: GitHub Actions](#future-github-actions)
+- [Deployment: GitHub Actions](#deployment-github-actions)
 - [Future Improvements](#future-improvements)
 
 ## Architecture
@@ -125,6 +125,9 @@ pokemon-stock-monitor/
 ├── pyproject.toml          # ruff + mypy + pytest + coverage config
 ├── .env.example
 ├── .gitignore
+├── .github/
+│   └── workflows/
+│       └── monitor.yml      # GitHub Actions: cron + secrets + state persistence
 ├── src/
 │   ├── main.py              # orchestration: run_once() + CLI entrypoint
 │   ├── config.py             # โหลด/validate .env -> Settings
@@ -207,59 +210,50 @@ UNKNOWN) ให้เปิดหน้าเว็บด้วยเบรา�
 `datetime.UTC`) เพื่อให้ทดสอบผ่านได้ทั้งสองเวอร์ชัน แนะนำให้รัน `pytest` อีกครั้ง
 บนเครื่องจริงที่มี Python 3.12 ก่อนใช้งาน production เพื่อยืนยันผลเช่นเดียวกัน
 
-## Future: GitHub Actions
+## Deployment: GitHub Actions
 
 โค้ด core (ทุกอย่างใน `src/`) ไม่ผูกกับ scheduler ใดๆ — `run_once()` คืน
 process exit code ตรงไปตรงมา จึงย้ายไปรันบน GitHub Actions ได้โดยไม่ต้องแก้
-โค้ดหลัก เพียงเพิ่ม workflow file และจัดการ 2 เรื่องนี้:
+โค้ดหลักแม้แต่บรรทัดเดียว ไฟล์ workflow พร้อมใช้งานอยู่ที่
+[`.github/workflows/monitor.yml`](.github/workflows/monitor.yml) แล้ว
 
-1. **Secrets**: ตั้งค่า `BOT_TOKEN` และ `CHAT_ID` เป็น GitHub Actions Secrets
-   (Settings -> Secrets and variables -> Actions)
-2. **State persistence**: runner ของ GitHub Actions เป็น ephemeral (ข้อมูล
-   หายทุกครั้งที่ job จบ) จึงต้อง commit `data/state.json` กลับเข้า repo
-   หลังแต่ละรัน มิเช่นนั้นระบบจะมองว่าทุกสินค้าเป็น "ใหม่" ทุกครั้งและแจ้งเตือนซ้ำ
+### ขั้นตอนเปิดใช้งาน
 
-ตัวอย่าง workflow (`.github/workflows/monitor.yml`) สำหรับอ้างอิงในอนาคต:
+1. Push โปรเจกต์ขึ้น GitHub repository
+2. ไปที่ **Settings -> Secrets and variables -> Actions -> New repository secret**
+   เพิ่ม 2 ค่า:
+   - `BOT_TOKEN` — Telegram Bot Token
+   - `CHAT_ID` — Chat ID ปลายทาง
+3. ไปที่แท็บ **Actions** เลือก workflow "Pokemon MA6 Stock Monitor" แล้วกด
+   **Run workflow** เพื่อทดสอบรันครั้งแรกด้วยมือ
+4. หลังจากนั้น workflow จะรันเองตาม cron ที่ตั้งไว้ (ค่าเริ่มต้นทุก 15 นาที)
 
-```yaml
-name: Pokemon MA6 Stock Monitor
+### รายละเอียดที่ workflow จัดการให้แล้ว
 
-on:
-  schedule:
-    - cron: "*/30 * * * *"   # ทุก 30 นาที (เวลา UTC)
-  workflow_dispatch: {}       # รันด้วยมือได้จาก Actions tab
+- **State persistence** — runner ของ GitHub Actions เป็น ephemeral (ข้อมูลหาย
+  ทุกครั้งที่ job จบ) workflow จึง commit `data/state.json` กลับเข้า repo
+  หลังแต่ละรอบ หากไม่ทำ ระบบจะมองว่าทุกสินค้าเป็น "ใหม่" และแจ้งเตือนซ้ำทุกรอบ
+- **`git add -f`** — `data/state.json` อยู่ใน `.gitignore` โดยตั้งใจ (กัน state
+  ของเครื่อง dev ปนขึ้น repo) ดังนั้นบน Actions ต้องใช้ `-f` เพื่อ override
+  มิเช่นนั้นคำสั่ง `git add` จะเงียบไม่ทำอะไรและ state จะไม่ถูกบันทึกเลย
+- **`permissions: contents: write`** — จำเป็นสำหรับ push กลับ repo
+- **`concurrency` guard** — กันไม่ให้สองรอบทำงานทับกันจน commit ชนกัน
+- **`git pull --rebase` ก่อน push** — กันกรณีมี commit อื่นถูก push แทรกระหว่างที่
+  job กำลังทำงาน (ทดสอบ scenario นี้แล้ว: state commit จะไปต่อบน commit ของคน
+  อื่นโดยไม่ทับงานกัน)
+- **ไม่ commit เมื่อ state ไม่เปลี่ยน** — ไม่สร้าง empty commit รกประวัติ
+- **ไม่ commit เมื่อ monitor ล้มเหลว** — ขั้นตอน persist จะไม่ทำงานหากขั้นตอน
+  ก่อนหน้า exit code ไม่ใช่ 0 (พฤติกรรม default ของ GitHub Actions)
 
-jobs:
-  monitor:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+### ข้อจำกัดที่ควรทราบ
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - run: pip install -r requirements.txt
-
-      - name: Run monitor
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python -m src.main
-
-      - name: Commit updated state
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/state.json
-          git diff --staged --quiet || git commit -m "chore: update stock state [skip ci]"
-          git push
-```
-
-หมายเหตุ: workflow ด้านบนเป็นตัวอย่างสำหรับใช้อ้างอิง ยังไม่ได้เพิ่มเข้า
-repository จริง (นอกขอบเขตของ Milestone 8) — ต้องทดสอบ `git push` permission
-(`contents: write`) และพิจารณาใช้ `actions/cache` แทนการ commit ทุกครั้งหากไม่
-ต้องการให้ประวัติ commit รกจากการรันถี่
+- **cron ของ GitHub Actions ไม่ตรงเวลา** — ขั้นต่ำที่ตั้งได้คือ 5 นาที แต่ในทาง
+  ปฏิบัติ scheduled workflow มักถูกดีเลย์หลายนาทีถึงหลักสิบนาทีในช่วงที่ระบบมีงาน
+  หนาแน่น หากต้องการความแม่นยำระดับนาที ให้ใช้โหมด `--schedule` บนเครื่องตัวเอง
+  หรือ VPS แทน
+- **ประวัติ commit จะยาวขึ้นเรื่อยๆ** จากการบันทึก state — หากไม่ต้องการ
+  พิจารณาเปลี่ยนไปใช้ `actions/cache` แทน (แลกกับความเสี่ยงที่ cache จะถูก evict
+  หลังไม่ถูกเรียกใช้ 7 วัน ซึ่งจะทำให้แจ้งเตือนซ้ำหนึ่งรอบ)
 
 ## Future Improvements
 
