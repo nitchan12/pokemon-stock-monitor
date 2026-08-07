@@ -109,6 +109,7 @@ def parse_product_page(html: str, source_url: str) -> Product:
 
     availability = detect_availability(soup)
     price = _extract_price(root)
+    action_label = _extract_action_label(soup)
 
     return Product(
         id=product_id,
@@ -117,7 +118,24 @@ def parse_product_page(html: str, source_url: str) -> Product:
         availability=availability,
         product_url=HttpUrl(source_url),
         checked_at=datetime.now(timezone.utc),
+        action_label=action_label,
     )
+
+
+def _extract_action_label(soup: BeautifulSoup) -> str | None:
+    """Return the text on the orderable action button, if one is rendered.
+
+    The storefront uses the SAME ``add-to-cart`` markup for a normal
+    purchase ("เพิ่มสินค้าไปยังรถเข็น") and for an open pre-order
+    ("สั่งของล่วงหน้า"); only the label differs. Availability detection
+    treats them identically — both mean "you can order this now" — but the
+    label is worth surfacing so the buyer knows which one they are getting.
+    """
+    button = soup.select_one(ADD_TO_CART_BUTTON_SELECTOR)
+    if button is None:
+        return None
+    label = button.get_text(strip=True)
+    return label or None
 
 
 def detect_availability(soup: BeautifulSoup) -> Availability:

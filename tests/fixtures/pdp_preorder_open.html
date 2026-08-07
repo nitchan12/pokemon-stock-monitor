@@ -1,0 +1,55 @@
+<!--
+  Fixture: product detail page with PRE-ORDERING OPEN (the orange
+  "สั่งของล่วงหน้า" button).
+
+  Copied verbatim from the raw server HTML of
+  https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-58-30th-celebration-expected-september-2026-10161784.html
+  while pre-ordering was open. Surrounding page chrome trimmed.
+
+  The important discovery this fixture locks in: an open pre-order uses the
+  EXACT SAME markup as a normal in-stock purchase —
+  class="btn btn-block btn-lg btn-info add-to-cart", data-available="true",
+  and schema.org/InStock. Only the button LABEL differs
+  ("สั่งของล่วงหน้า" vs "เพิ่มสินค้าไปยังรถเข็น").
+
+  So availability detection needs no special case — both mean "orderable
+  now" — but the label is captured so the alert can tell the buyer which
+  kind of order they are placing.
+-->
+<html>
+<head>
+  <script type="application/ld+json">
+  {"@context":"http://schema.org/","@type":"Product",
+   "name":"(พรีออเดอร์) Pokemon TCG MA6 (58) ชุด 30th Celebration",
+   "offers":{"@type":"Offer","price":"1980","priceCurrency":"THB",
+             "availability":"http://schema.org/InStock"}}
+  </script>
+</head>
+<body>
+  <div class="product-detail product-data product-wrapper page-inner" data-pid="10161784">
+    <h1 class="product-name">(พรีออเดอร์) Pokemon TCG MA6 (58) ชุด 30th Celebration (กำหนดวางจำหน่าย กันยายน 2026)</h1>
+
+    <div class="prices">
+      <span class="price-items">
+        <span class="sales"><span class="value">฿1,980</span></span>
+      </span>
+    </div>
+
+    <div class="row no-gutters summary">
+      <div class="col-12 cart-and-ipay add-button-wrapper">
+        <div class="">
+          <input type="hidden" class="add-to-cart-url" value="/on/demandware.store/Sites-ToysRUs_TH-Site/th_TH/Cart-AddProduct" />
+          <button class="btn btn-block btn-lg btn-info add-to-cart" data-toggle="modal" data-pid="10161784" data-add-to-cart >
+            สั่งของล่วงหน้า
+          </button>
+        </div>
+
+        <div class="availability product-availability" data-ready-to-order="true" data-available="true" data-limit-reached="false">
+          <ul class="list-unstyled availability-msg"><li></li></ul>
+          <ul class="list-unstyled limit-msg"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

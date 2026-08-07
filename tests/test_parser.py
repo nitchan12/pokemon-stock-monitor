@@ -38,6 +38,12 @@ class TestDetectAvailability:
     def test_real_in_stock_page_is_in_stock(self):
         assert detect_availability(_soup("pdp_in_stock.html")) == Availability.IN_STOCK
 
+    def test_open_preorder_counts_as_in_stock(self):
+        # An open pre-order ("สั่งของล่วงหน้า") renders the same markup as a
+        # normal purchase, and it means the same thing for our purposes:
+        # the user can place an order right now, so it must alert.
+        assert detect_availability(_soup("pdp_preorder_open.html")) == Availability.IN_STOCK
+
     def test_conflicting_signals_yield_unknown_not_a_guess(self):
         # data-available="true" but the out-of-stock button is rendered.
         # Must NOT report IN_STOCK — a false positive sends the user to a
@@ -136,6 +142,20 @@ class TestParseProductPage:
     def test_in_stock_page_parses_as_in_stock(self):
         product = parse_product_page(_load_fixture("pdp_in_stock.html"), MA6_URL)
         assert product.availability == Availability.IN_STOCK
+
+    def test_preorder_page_parses_as_in_stock_and_captures_the_label(self):
+        product = parse_product_page(_load_fixture("pdp_preorder_open.html"), MA6_URL)
+
+        assert product.availability == Availability.IN_STOCK
+        assert product.action_label == "สั่งของล่วงหน้า"
+
+    def test_normal_purchase_label_is_captured(self):
+        product = parse_product_page(_load_fixture("pdp_in_stock.html"), MA6_URL)
+        assert product.action_label == "เพิ่มสินค้าไปยังรถเข็น"
+
+    def test_out_of_stock_page_has_no_action_label(self):
+        product = parse_product_page(_load_fixture("pdp_out_of_stock.html"), MA6_URL)
+        assert product.action_label is None
 
     def test_checked_at_is_timezone_aware(self):
         product = parse_product_page(_load_fixture("pdp_out_of_stock.html"), MA6_URL)

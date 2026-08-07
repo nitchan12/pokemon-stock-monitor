@@ -66,10 +66,13 @@ class TestDefaults:
         ids = {url.rsplit("-", 1)[-1] for url in DEFAULT_PRODUCT_URLS}
         assert len(ids) == len(DEFAULT_PRODUCT_URLS)
 
-    def test_delisted_product_is_not_monitored(self):
-        # 10161784 returns HTTP 410 Gone and is absent from search results.
-        # Keeping it would mean a failing fetch and an ERROR log every run.
-        assert not any("10161784" in url for url in DEFAULT_PRODUCT_URLS)
+    def test_all_three_known_ma6_products_are_monitored(self):
+        # 10161784 (the ฿1,980 booster box) briefly returned HTTP 410 and
+        # vanished from search, then came back with pre-ordering open. Pages
+        # here can disappear and return, so it stays on the list and a failed
+        # fetch is treated as transient rather than a reason to drop it.
+        for pid in ("10161784", "10161785", "10161786"):
+            assert any(pid in url for url in DEFAULT_PRODUCT_URLS), f"{pid} not monitored"
 
 
 class TestOverrides:

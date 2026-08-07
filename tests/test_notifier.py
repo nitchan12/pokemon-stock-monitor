@@ -20,7 +20,11 @@ CHECKED_AT = datetime(2026, 8, 6, 5, 0, 0, tzinfo=timezone.utc)  # 12:00 ICT
 MAX_NOTIFY = 3
 
 
-def make_product(name: str = "Pokemon TCG MA6", price: str | None = "1980") -> Product:
+def make_product(
+    name: str = "Pokemon TCG MA6",
+    price: str | None = "1980",
+    action_label: str | None = "เพิ่มสินค้าไปยังรถเข็น",
+) -> Product:
     return Product(
         id="10161784",
         name=name,
@@ -28,6 +32,7 @@ def make_product(name: str = "Pokemon TCG MA6", price: str | None = "1980") -> P
         availability=Availability.IN_STOCK,
         product_url="https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-10161784.html",
         checked_at=CHECKED_AT,
+        action_label=action_label,
     )
 
 
@@ -87,6 +92,49 @@ class TestFormatEventMessage:
 
         assert "<script>" not in text
         assert "&lt;script&gt;" in text
+
+
+class TestPreorderVsNormalPurchase:
+    """An open pre-order and a normal purchase are indistinguishable in the
+    markup apart from the button label, so the alert must use that label to
+    tell the buyer which kind of order they are about to place."""
+
+    def test_preorder_uses_preorder_wording(self):
+        text = format_event_message(make_event(action_label="สั่งของล่วงหน้า"), MAX_NOTIFY)
+
+        assert "เปิดให้สั่งจองแล้ว" in text
+        assert "สถานะ: เปิดให้สั่งจองล่วงหน้า" in text
+        assert "มีสินค้าแล้ว" not in text
+
+    def test_normal_purchase_uses_in_stock_wording(self):
+        text = format_event_message(make_event(action_label="เพิ่มสินค้าไปยังรถเข็น"), MAX_NOTIFY)
+
+        assert "มีสินค้าแล้ว" in text
+        assert "สถานะ: มีสินค้า พร้อมกดใส่ตะกร้า" in text
+        assert "สั่งจอง" not in text
+
+    def test_repeat_preorder_alert_is_labelled_as_a_repeat(self):
+        text = format_event_message(
+            make_event(notify_number=2, is_repeat=True, action_label="สั่งของล่วงหน้า"),
+            MAX_NOTIFY,
+        )
+
+        assert "เตือนซ้ำ" in text
+        assert "สั่งจอง" in text
+
+    def test_button_label_is_shown_to_the_user(self):
+        text = format_event_message(make_event(action_label="สั่งของล่วงหน้า"), MAX_NOTIFY)
+        assert "ปุ่มบนเว็บ: สั่งของล่วงหน้า" in text
+
+    def test_missing_label_falls_back_to_in_stock_wording(self):
+        text = format_event_message(make_event(action_label=None), MAX_NOTIFY)
+
+        assert "มีสินค้าแล้ว" in text
+        assert "ปุ่มบนเว็บ" not in text
+
+    def test_english_preorder_label_is_recognized(self):
+        text = format_event_message(make_event(action_label="Pre-Order Now"), MAX_NOTIFY)
+        assert "เปิดให้สั่งจองแล้ว" in text
 
 
 class TestTelegramNotifierSendEvent:

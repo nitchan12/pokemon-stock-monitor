@@ -23,12 +23,13 @@ logger = logging.getLogger(__name__)
 # PDP URL rather than a search-results page, because the PDP exposes the
 # authoritative add-to-cart / out-of-stock markup (see parser.py).
 #
-# Product 10161784 ("MA6 (58) ชุด 30th Celebration", ฿1,980) was previously
-# monitored here but the storefront now returns HTTP 410 Gone for it and it
-# no longer appears in search results — it has been delisted. It is left out
-# rather than kept as a permanently-failing fetch. To monitor it again (or
-# any other page), set PRODUCT_URLS in .env.
+# Note on 10161784 (the ฿1,980 booster box): this page briefly returned HTTP
+# 410 Gone and vanished from search results, then came back with pre-ordering
+# open. Product pages here can disappear and return, so a fetch failure is
+# treated as transient (logged and skipped) rather than a reason to drop a
+# URL from this list. Override the whole list via PRODUCT_URLS in .env.
 DEFAULT_PRODUCT_URLS: tuple[str, ...] = (
+    "https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-58-30th-celebration-expected-september-2026-10161784.html",
     "https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-futuristic-rare-set-58-30th-celebration-expected-september-2026-10161786.html",
     "https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-first-partner-58-30th-celebration-expected-september-2026-10161785.html",
 )

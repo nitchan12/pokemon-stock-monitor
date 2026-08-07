@@ -40,6 +40,16 @@ class Product(BaseModel):
     availability: Availability
     product_url: HttpUrl
     checked_at: datetime
+    action_label: str | None = Field(
+        default=None,
+        description=(
+            "Text on the site's action button when the product is orderable, e.g. "
+            "'สั่งของล่วงหน้า' (pre-order open) or 'เพิ่มสินค้าไปยังรถเข็น' (normal "
+            "purchase). Both use the same markup, so this is the only thing that "
+            "distinguishes them — it is surfaced in the alert so the buyer knows "
+            "which one they are getting. None when the product is not orderable."
+        ),
+    )
 
     @field_validator("name")
     @classmethod

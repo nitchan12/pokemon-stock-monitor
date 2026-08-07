@@ -32,6 +32,13 @@ CLIENT_ERROR_THRESHOLD = 400
 
 FIRST_ALERT_HEADER = "\U0001f6a8 MA6 มีสินค้าแล้ว! รีบสั่งเลย"
 REPEAT_ALERT_HEADER = "\U0001f514 เตือนซ้ำ: MA6 ยังมีสินค้าอยู่"
+FIRST_PREORDER_HEADER = "\U0001f6a8 MA6 เปิดให้สั่งจองแล้ว! รีบสั่งเลย"
+REPEAT_PREORDER_HEADER = "\U0001f514 เตือนซ้ำ: MA6 ยังเปิดให้สั่งจองอยู่"
+
+# Substrings that mark the action button as a pre-order rather than a
+# normal purchase. Both render identical markup, so the label is the only
+# thing that tells them apart.
+PREORDER_LABEL_MARKERS = ("ล่วงหน้า", "พรีออเดอร์", "pre-order", "preorder")
 
 
 class NotifierError(Exception):
@@ -47,17 +54,35 @@ class NonRetryableNotifierError(NotifierError):
     would not help."""
 
 
+def _is_preorder(action_label: str | None) -> bool:
+    if not action_label:
+        return False
+    lowered = action_label.lower()
+    return any(marker.lower() in lowered for marker in PREORDER_LABEL_MARKERS)
+
+
 def format_event_message(event: Event, max_notify_count: int) -> str:
-    """Render an in-stock alert as a Telegram HTML message."""
+    """Render an in-stock / pre-order-open alert as a Telegram HTML message."""
     product = event.product
-    header = REPEAT_ALERT_HEADER if event.is_repeat else FIRST_ALERT_HEADER
+    preorder = _is_preorder(product.action_label)
+
+    if preorder:
+        header = REPEAT_PREORDER_HEADER if event.is_repeat else FIRST_PREORDER_HEADER
+        status = "เปิดให้สั่งจองล่วงหน้า"
+    else:
+        header = REPEAT_ALERT_HEADER if event.is_repeat else FIRST_ALERT_HEADER
+        status = "มีสินค้า พร้อมกดใส่ตะกร้า"
 
     lines = [
         f"<b>{header}</b>",
         "",
         f"ชื่อสินค้า: {html.escape(product.name)}",
         f"ราคา: {format_price_thb(product.price)}",
-        "สถานะ: มีสินค้า พร้อมกดใส่ตะกร้า",
+        f"สถานะ: {status}",
+    ]
+    if product.action_label:
+        lines.append(f"ปุ่มบนเว็บ: {html.escape(product.action_label)}")
+    lines += [
         f"ลิงก์: {html.escape(str(product.product_url))}",
         f"เวลาที่ตรวจพบ: {format_thai_datetime(product.checked_at)}",
     ]
