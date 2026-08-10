@@ -5,13 +5,13 @@
         "id": "10161784",
         "name": "(พรีออเดอร์) Pokemon TCG MA6 (58) ชุด 30th Celebration (กำหนดวางจำหน่าย กันยายน 2026)",
         "price": "1980",
-        "availability": "IN_STOCK",
+        "availability": "OUT_OF_STOCK",
         "product_url": "https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-58-30th-celebration-expected-september-2026-10161784.html",
-        "checked_at": "2026-08-10T20:25:21.873030Z",
-        "action_label": "สั่งของล่วงหน้า"
+        "checked_at": "2026-08-10T21:21:27.969347Z",
+        "action_label": null
       },
-      "notify_count": 3,
-      "last_notified_at": "2026-08-07T10:55:50.924774Z"
+      "notify_count": 0,
+      "last_notified_at": null
     },
     "10161785": {
       "product": {
@@ -20,7 +20,7 @@
         "price": "555",
         "availability": "OUT_OF_STOCK",
         "product_url": "https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-first-partner-58-30th-celebration-expected-september-2026-10161785.html",
-        "checked_at": "2026-08-10T20:25:27.238974Z",
+        "checked_at": "2026-08-10T21:21:33.271134Z",
         "action_label": null
       },
       "notify_count": 0,
@@ -33,12 +33,12 @@
         "price": "6500",
         "availability": "OUT_OF_STOCK",
         "product_url": "https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-futuristic-rare-set-58-30th-celebration-expected-september-2026-10161786.html",
-        "checked_at": "2026-08-10T20:25:24.560425Z",
+        "checked_at": "2026-08-10T21:21:30.626994Z",
         "action_label": null
       },
       "notify_count": 0,
       "last_notified_at": null
     }
   },
-  "last_checked_at": "2026-08-10T20:25:27.241679Z"
+  "last_checked_at": "2026-08-10T21:21:33.273364Z"
 }
