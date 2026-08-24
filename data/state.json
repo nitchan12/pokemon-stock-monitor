@@ -7,7 +7,7 @@
         "price": "1980",
         "availability": "OUT_OF_STOCK",
         "product_url": "https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-58-30th-celebration-expected-september-2026-10161784.html",
-        "checked_at": "2026-08-24T23:31:18.615228Z",
+        "checked_at": "2026-08-24T23:54:05.341623Z",
         "action_label": null
       },
       "notify_count": 0,
@@ -20,11 +20,11 @@
         "price": "555",
         "availability": "IN_STOCK",
         "product_url": "https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-first-partner-58-30th-celebration-expected-september-2026-10161785.html",
-        "checked_at": "2026-08-24T23:31:24.632951Z",
+        "checked_at": "2026-08-24T23:54:11.556165Z",
         "action_label": "สั่งของล่วงหน้า"
       },
-      "notify_count": 1,
-      "last_notified_at": "2026-08-24T23:31:24.634047Z"
+      "notify_count": 2,
+      "last_notified_at": "2026-08-24T23:54:11.557613Z"
     },
     "10161786": {
       "product": {
@@ -33,12 +33,12 @@
         "price": "6500",
         "availability": "OUT_OF_STOCK",
         "product_url": "https://www.toysrus.co.th/th-th/pre-order-pokemon-tcg-ma6-futuristic-rare-set-58-30th-celebration-expected-september-2026-10161786.html",
-        "checked_at": "2026-08-24T23:31:21.239557Z",
+        "checked_at": "2026-08-24T23:54:08.031001Z",
         "action_label": null
       },
       "notify_count": 0,
       "last_notified_at": null
     }
   },
-  "last_checked_at": "2026-08-24T23:31:25.786671Z"
+  "last_checked_at": "2026-08-24T23:54:12.077608Z"
 }
